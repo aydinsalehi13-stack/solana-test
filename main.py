@@ -1,0 +1,222 @@
+"""The desk: one asyncio process. Event loop, heartbeats, watchdog, API server."""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import os
+import sys
+import time
+
+import config
+import logsetup
+from bus import Hub, beating_sleep, lag_monitor
+
+log = logging.getLogger("desk.main")
+
+STALE_S = 95.0  # a bot silent this long gets restarted
+WAKE_SLEEP_S = 15.0  # watchdog tick; if it takes > 2x this, the machine slept
+HEARTBEAT_DB_S = 30.0
+
+
+class Supervisor:
+    """Runs named components, restarts crashed ones, and restarts stale ones (no heartbeat > 95 s)."""
+
+    def __init__(self, hub: Hub, stale_s: float = STALE_S, tick_s: float = WAKE_SLEEP_S, clock=time.time):
+        self.hub, self.stale_s, self.tick_s, self.clock = hub, stale_s, tick_s, clock
+        self.specs: dict[str, callable] = {}
+        self.runners: dict[str, asyncio.Task] = {}
+        self.inner: dict[str, asyncio.Task] = {}
+        self.restarts: list[dict] = []
+        self._watchdog: asyncio.Task | None = None
+
+    def add(self, name: str, factory) -> None:
+        self.specs[name] = factory
+        self.hub.heartbeats.beat(name)
+        if self._watchdog is not None:  # added after start
+            self.runners[name] = asyncio.create_task(self._runner(name), name=f"run:{name}")
+
+    def start(self) -> None:
+        for name in self.specs:
+            self.runners[name] = asyncio.create_task(self._runner(name), name=f"run:{name}")
+        self._watchdog = asyncio.create_task(self._watch(), name="watchdog")
+
+    async def stop(self) -> None:
+        tasks = list(self.runners.values()) + ([self._watchdog] if self._watchdog else [])
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _note(self, name: str, reason: str) -> None:
+        self.restarts.append({"ts": self.clock(), "bot": name, "reason": reason})
+        self.hub.bus.publish("restart", {"bot": name, "reason": reason})
+        log.warning("restarting %s: %s", name, reason)
+
+    async def _runner(self, name: str) -> None:
+        me = asyncio.current_task()
+        while True:
+            inner = asyncio.create_task(self.specs[name](), name=name)
+            self.inner[name] = inner
+            self.hub.heartbeats.beat(name)
+            try:
+                await inner
+                self._note(name, "exited")
+            except asyncio.CancelledError:
+                if me.cancelling():  # we are shutting down
+                    inner.cancel()
+                    raise
+                # the watchdog cancelled the inner task: loop and start it again
+            except Exception as e:  # noqa: BLE001
+                self._note(name, f"crashed: {type(e).__name__}: {e}")
+                await asyncio.sleep(1.0)
+
+    def on_wake(self) -> None:
+        """Laptop slept or froze: give every bot a fresh window instead of a false alarm."""
+        self.hub.heartbeats.touch_all()
+        self.hub.bus.publish("wake", {})
+        log.info("wake from sleep detected: heartbeats reset")
+
+    def check_stale(self) -> list[str]:
+        stale = self.hub.heartbeats.stale(self.stale_s, exclude=("watchdog",))
+        for name in stale:
+            inner = self.inner.get(name)
+            if inner is None or inner.done():
+                continue
+            self._note(name, f"stale {self.hub.heartbeats.age(name):.0f}s")
+            self.hub.heartbeats.beat(name)
+            inner.cancel()
+        return stale
+
+    async def _watch(self) -> None:
+        while True:
+            t0 = time.time()
+            await asyncio.sleep(self.tick_s)
+            self.hub.heartbeats.beat("watchdog")
+            if time.time() - t0 > 2 * self.tick_s:
+                self.on_wake()
+                continue
+            self.check_stale()
+
+
+async def heartbeat_writer(hub: Hub, db, interval: float = HEARTBEAT_DB_S) -> None:
+    while True:
+        await db.write_heartbeats(hub.heartbeats.rows())
+        await beating_sleep(hub, "heartbeat_writer", interval)
+
+
+async def retention_task(hub: Hub, db) -> None:
+    await beating_sleep(hub, "retention", 60)
+    while True:
+        deleted = await db.retention()
+        if any(deleted.values()):
+            log.info("retention deleted %s", deleted)
+        await beating_sleep(hub, "retention", 6 * 3600)
+
+
+async def lag_alert(hub: Hub) -> None:
+    while True:
+        await beating_sleep(hub, "lag_alert", 60)
+        p95 = hub.lag.snapshot()["p95"]
+        if p95 is not None and p95 > 250:
+            log.warning("event-loop lag p95 %.0f ms (> 250 ms)", p95)
+
+
+def write_pid() -> None:
+    config.PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    config.PID_FILE.write_text(str(os.getpid()))
+
+
+def clear_pid() -> None:
+    with contextlib.suppress(FileNotFoundError):
+        if config.PID_FILE.read_text().strip() == str(os.getpid()):
+            config.PID_FILE.unlink()
+
+
+def _make_server_class():
+    import uvicorn
+
+    class _DeskServer(uvicorn.Server):
+        """uvicorn re-raises SIGTERM after shutting down, which would kill us before our cleanup
+        (pid file, final heartbeat flush, db close). We own the signals instead."""
+
+        @contextlib.contextmanager
+        def capture_signals(self):
+            yield
+
+    return _DeskServer
+
+
+def _install_stop_signals(server) -> None:
+    import signal
+
+    def stop(*_):
+        server.should_exit = True
+
+    loop = asyncio.get_running_loop()
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            loop.add_signal_handler(sig, stop)
+        except (NotImplementedError, RuntimeError, ValueError):  # Windows event loops
+            with contextlib.suppress(ValueError, OSError):
+                signal.signal(sig, stop)
+
+
+async def amain() -> int:
+    import uvicorn
+
+    import osutil
+    from api import create_app
+    from db import Database
+
+    config.ensure_dirs()
+    config.load_env()
+    logsetup.setup_logging()
+
+    hub = Hub()
+    db = Database(config.DB_PATH)
+    await db.start()
+    write_pid()
+
+    token = os.environ.get("APP_TOKEN", "")
+    if not token:
+        log.error("APP_TOKEN is empty: the API will refuse every request. Run setup.py or edit .env")
+
+    sup = Supervisor(hub)
+    sup.add("loop", lambda: lag_monitor(hub))
+    sup.add("heartbeat_writer", lambda: heartbeat_writer(hub, db))
+    sup.add("retention", lambda: retention_task(hub, db))
+    sup.add("lag_alert", lambda: lag_alert(hub))
+    sup.start()
+
+    host, port = config.desk_host(), config.desk_port()
+    server = _make_server_class()(
+        uvicorn.Config(create_app(db, hub, token, sup), host=host, port=port, log_level="warning", access_log=False)
+    )
+    _install_stop_signals(server)
+    shown = osutil.lan_ip() or host if host in ("0.0.0.0", "::") else host
+    log.info("desk up, mode=%s, dashboard on http://%s:%s", config.DEFAULT_MODE, shown, port)
+
+    code = 0
+    try:
+        await server.serve()
+    except SystemExit as e:  # uvicorn exits this way when the port is taken
+        code = int(e.code or 1)
+        log.error("API server could not start on %s:%s", host, port)
+    finally:
+        await sup.stop()
+        with contextlib.suppress(Exception):
+            await db.write_heartbeats(hub.heartbeats.rows())
+        await db.stop()
+        clear_pid()
+    return code
+
+
+def run() -> int:
+    return asyncio.run(amain())
+
+
+if __name__ == "__main__":
+    sys.exit(run())

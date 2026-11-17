@@ -1,7 +1,7 @@
 websockets
 httpx[http2]
 fastapi
-uvicorn
+uvicorn>=0.30
 pydantic
 playwright
 pytest
