@@ -1,0 +1,14 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/
+*.log
+data/
+chrome-profile/
+reports/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
