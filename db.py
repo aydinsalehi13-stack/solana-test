@@ -91,6 +91,21 @@ CREATE TABLE IF NOT EXISTS strat_events (
 """
 
 
+# Columns added after the first schema: (table, column, definition). Applied to existing databases too.
+MIGRATIONS = [
+    ("positions", "realized_usd", "REAL DEFAULT 0"),
+    ("positions", "meta", "TEXT"),
+    ("positions", "fees_buy_usd", "REAL DEFAULT 0"),
+]
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    for table, col, ddl in MIGRATIONS:
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if col not in have:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+
+
 class DatabaseClosed(RuntimeError):
     pass
 
@@ -157,6 +172,7 @@ class Database:
                 "synchronous": conn.execute("PRAGMA synchronous").fetchone()[0],  # 1 = NORMAL
             }
             conn.executescript(SCHEMA)
+            migrate(conn)
         except BaseException as e:  # noqa: BLE001 - reported to start()
             self._start_error = e
             self._ready.set()

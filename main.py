@@ -197,6 +197,14 @@ async def amain() -> int:
         sup.add("feed", pump.run)
         sup.add("snapshots", fallbacks.snapshot_loop)
         sup.add("feed_fallback", fallbacks.gecko_loop)
+        if os.environ.get("DESK_BOTS") != "0":  # DESK_BOTS=0: market feed only, no strategy bots
+            import desk as desk_mod
+
+            pd = await desk_mod.build(hub, db, clients, fallbacks.dex)
+            for name, bot in (("scanner", pd.scanner), ("analyst", pd.analyst), ("brain", pd.brain),
+                              ("executor", pd.executor), ("risk", pd.risk)):
+                sup.add(name, bot.run)
+            sup.add("browser_link", pd.browser_link)
     sup.start()
 
     host, port = config.desk_host(), config.desk_port()

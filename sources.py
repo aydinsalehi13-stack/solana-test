@@ -7,6 +7,7 @@ the owner's machine; a missing field is None, never a guess (hard rule 9).
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import time
@@ -260,3 +261,248 @@ class GeckoTerminal:
             raise
         self.last_ok = self._clock()
         return parse_gecko_new_pools(data)
+
+
+# ======================================================================================================
+# Phase 4 adapters: Solana RPC, RugCheck, Coinbase. Any failure raises SourceError / RateLimited, which the
+# Analyst turns into "no data: ..." (red), never into a pass.
+# ======================================================================================================
+_B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+PUBLIC_RPC = "https://api.mainnet-beta.solana.com"
+RUGCHECK = "https://api.rugcheck.xyz"
+COINBASE_SOL = "https://api.coinbase.com/v2/prices/SOL-USD/spot"
+# Helius free plan credit cost; everything else counts 1
+RPC_COST = {"getProgramAccounts": 10}
+
+
+def b58encode(b: bytes) -> str:
+    n = int.from_bytes(b, "big")
+    out = ""
+    while n:
+        n, r = divmod(n, 58)
+        out = _B58[r] + out
+    return "1" * (len(b) - len(b.lstrip(b"\0"))) + out
+
+
+class Rpc:
+    """Solana JSON-RPC. Uses HELIUS_API_KEY when given (the URL is never logged), else the public endpoint."""
+
+    def __init__(self, clients: Clients, url: str | None = None, helius_key: str | None = None, sleep=asyncio.sleep,
+                 clock=time.monotonic):
+        self.clients, self._sleep, self._clock = clients, sleep, clock
+        self._url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}" if helius_key else (url or PUBLIC_RPC)
+        self.label = "helius" if helius_key else "public"
+        self.sem = asyncio.Semaphore(8)
+        self.authority_cache = TTLCache(600, clock)
+        self.holders_cache = TTLCache(60, clock)
+        self.history_cache = TTLCache(3600, clock)
+        self.credits: dict[str, int] = {}
+        self.calls = 0
+        self._id = 0
+
+    def credits_today(self) -> int:
+        return self.credits.get(time.strftime("%Y-%m-%d"), 0)
+
+    async def call(self, method: str, params: list, retries: int = 1):
+        self._id += 1
+        body = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params}
+        day = time.strftime("%Y-%m-%d")
+        self.credits[day] = self.credits.get(day, 0) + RPC_COST.get(method, 1)
+        self.calls += 1
+        last = None
+        for attempt in range(retries):
+            try:
+                async with self.sem:
+                    r = await self.clients.get(self._url).post(self._url, json=body)
+                if r.status_code == 429:
+                    raise RateLimited("rpc 429")
+                if r.status_code != 200:
+                    raise SourceError(f"rpc HTTP {r.status_code}")
+                j = r.json()
+                if "error" in j:
+                    raise SourceError(f"rpc error {j['error'].get('code')}: {str(j['error'].get('message'))[:80]}")
+                return j.get("result")
+            except (httpx.TransportError, ValueError) as e:
+                last = SourceError(f"rpc {type(e).__name__}")
+                if attempt < retries - 1:
+                    await self._sleep(0.5 * 2 ** attempt)
+        raise last or SourceError("rpc failed")
+
+    async def mint_info(self, mint: str) -> dict:
+        """mint/freeze authority (None = revoked), supply (UI units) and decimals. 10 min cache."""
+        hit = self.authority_cache.get(mint)
+        if hit:
+            return hit
+        res = await self.call("getAccountInfo", [mint, {"encoding": "jsonParsed"}])
+        info = dig(res, "value", "data", "parsed", "info")
+        if not isinstance(info, dict) or "mintAuthority" not in info and "freezeAuthority" not in info:
+            raise SourceError("no mint data")
+        dec = int(info.get("decimals", 0))
+        out = {"mint_authority": info.get("mintAuthority"), "freeze_authority": info.get("freezeAuthority"),
+               "supply": float(info.get("supply", 0)) / 10 ** dec if info.get("supply") is not None else None, "decimals": dec}
+        self.authority_cache.put(mint, out)
+        return out
+
+    async def largest_accounts(self, mint: str) -> list[tuple[str, float]]:
+        res = await self.call("getTokenLargestAccounts", [mint])
+        return [(v["address"], float(v.get("uiAmount") or 0)) for v in (dig(res, "value") or [])]
+
+    async def owners_of(self, token_accounts: list[str]) -> dict[str, str | None]:
+        res = await self.call("getMultipleAccounts", [token_accounts, {"encoding": "jsonParsed"}])
+        out = {}
+        for addr, v in zip(token_accounts, dig(res, "value") or []):
+            out[addr] = dig(v, "data", "parsed", "info", "owner") if v else None
+        return out
+
+    async def top10_pct(self, mint: str, exclude_owners: set[str]) -> float | None:
+        """Share of supply held by the 10 biggest holders, with the pool and the bonding curve excluded."""
+        hit = self.holders_cache.get(("top10", mint, tuple(sorted(exclude_owners))))
+        if hit is not None:
+            return hit
+        info = await self.mint_info(mint)
+        if not info["supply"]:
+            return None
+        accts = await self.largest_accounts(mint)
+        owners = await self.owners_of([a for a, _ in accts]) if accts else {}
+        kept = sorted((amt for a, amt in accts if owners.get(a) not in exclude_owners), reverse=True)[:10]
+        pct = 100.0 * sum(kept) / info["supply"]
+        self.holders_cache.put(("top10", mint, tuple(sorted(exclude_owners))), pct)
+        return pct
+
+    async def token_balance(self, owner: str, mint: str) -> float | None:
+        res = await self.call("getTokenAccountsByOwner", [owner, {"mint": mint}, {"encoding": "jsonParsed"}])
+        vals = dig(res, "value")
+        if vals is None:
+            return None
+        return sum(float(dig(v, "account", "data", "parsed", "info", "tokenAmount", "uiAmount") or 0) for v in vals)
+
+    async def delegations(self, mint: str, decimals: int) -> dict:
+        """Token accounts of the mint on both token programs: owner, amount, delegate (via dataSlice 32..108)."""
+        hit = self.holders_cache.get(("deleg", mint))
+        if hit is not None:
+            return hit
+        accounts = []
+        for program, with_size in ((TOKEN_PROGRAM, True), (TOKEN_2022_PROGRAM, False)):
+            filters = [{"memcmp": {"offset": 0, "bytes": mint}}] + ([{"dataSize": 165}] if with_size else [])
+            res = await self.call("getProgramAccounts", [program, {"encoding": "base64", "filters": filters,
+                                                                  "dataSlice": {"offset": 32, "length": 76}}])
+            for item in res or []:
+                raw = base64.b64decode(dig(item, "account", "data")[0])
+                if len(raw) < 76:
+                    continue
+                amount = int.from_bytes(raw[32:40], "little") / 10 ** decimals
+                has_delegate = int.from_bytes(raw[40:44], "little") == 1
+                accounts.append({"owner": b58encode(raw[0:32]), "amount": amount,
+                                 "delegate": b58encode(raw[44:76]) if has_delegate else None})
+        by_delegate: dict[str, int] = {}
+        for a in accounts:
+            if a["delegate"]:
+                by_delegate[a["delegate"]] = by_delegate.get(a["delegate"], 0) + 1
+        out = {"accounts": len(accounts), "by_delegate": by_delegate,
+               "top_holders": sorted(((a["owner"], a["amount"]) for a in accounts), key=lambda x: -x[1])[:20]}
+        self.holders_cache.put(("deleg", mint), out)
+        return out
+
+    async def signature_count(self, owner: str, limit: int = 20) -> int:
+        res = await self.call("getSignaturesForAddress", [owner, {"limit": limit}])
+        return len(res or [])
+
+
+def lp_for_pool(report: dict | None, pool: str | None) -> dict | None:
+    """RugCheck market whose pubkey is the pool Scanner saw: {locked_pct} or None when there is no such market."""
+    for m in (report or {}).get("markets") or []:
+        if pool and m.get("pubkey") == pool:
+            return {"locked_pct": num((m.get("lp") or {}).get("lpLockedPct"))}
+    return None
+
+
+def insiders_pct(report: dict | None) -> float | None:
+    """Share of supply held by RugCheck's insider networks, or None when the report cannot say."""
+    if not isinstance(report, dict) or "insiderNetworks" not in report:
+        return None
+    nets = report.get("insiderNetworks")
+    if nets is None:
+        return 0.0
+    supply = num(dig(report, "token", "supply"))
+    if not supply:
+        return None
+    return 100.0 * sum(num(n.get("tokenAmount")) or 0 for n in nets) / supply
+
+
+def biggest_bundle(graph: dict | None) -> int | None:
+    """Size of the biggest group of holders joined by funding edges. None when the graph has no edges key."""
+    if not isinstance(graph, dict):
+        return None
+    key = "links" if "links" in graph else "edges" if "edges" in graph else None
+    if key is None:
+        return None
+    parent: dict[str, str] = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for e in graph[key] or []:
+        a, b = e.get("source"), e.get("target")
+        if a is not None and b is not None:
+            parent[find(str(a))] = find(str(b))
+    sizes: dict[str, int] = {}
+    for n in list(parent):
+        sizes[find(n)] = sizes.get(find(n), 0) + 1
+    return max(sizes.values(), default=1 if graph.get("nodes") else 0)
+
+
+class RugCheck:
+    """RugCheck report (2 min cache), insiders graph, recent rugs. Concurrency 3."""
+
+    def __init__(self, clients: Clients, sleep=asyncio.sleep, clock=time.monotonic):
+        self.clients, self._sleep = clients, sleep
+        self.sem = asyncio.Semaphore(3)
+        self.cache = TTLCache(120, clock)
+
+    async def report(self, mint: str) -> dict:
+        hit = self.cache.get(("r", mint))
+        if hit:
+            return hit
+        data = await get_json(self.clients, f"{RUGCHECK}/v1/tokens/{mint}/report", sleep=self._sleep, sem=self.sem)
+        if not isinstance(data, dict):
+            raise SourceError("rugcheck: bad report")
+        self.cache.put(("r", mint), data)
+        return data
+
+    async def insiders_graph(self, mint: str) -> dict:
+        hit = self.cache.get(("g", mint))
+        if hit:
+            return hit
+        data = await get_json(self.clients, f"{RUGCHECK}/v1/tokens/{mint}/insiders/graph", sleep=self._sleep, sem=self.sem)
+        self.cache.put(("g", mint), data)
+        return data
+
+    async def recent_rugs(self, limit: int = 50) -> list:
+        data = await get_json(self.clients, f"{RUGCHECK}/v1/stats/rugs/ticker", params={"limit": limit},
+                              sleep=self._sleep, sem=self.sem)
+        return data if isinstance(data, list) else []
+
+
+class Coinbase:
+    """SOL-USD spot every 30 s."""
+
+    def __init__(self, clients: Clients, clock=time.monotonic):
+        self.clients = clients
+        self.cache = TTLCache(30, clock)
+
+    async def spot(self) -> float:
+        hit = self.cache.get("sol")
+        if hit:
+            return hit
+        data = await get_json(self.clients, COINBASE_SOL)
+        v = num(dig(data, "data", "amount"))
+        if not v or v <= 0:
+            raise SourceError("coinbase: no SOL price")
+        self.cache.put("sol", v)
+        return v
