@@ -189,6 +189,14 @@ async def amain() -> int:
     sup.add("heartbeat_writer", lambda: heartbeat_writer(hub, db))
     sup.add("retention", lambda: retention_task(hub, db))
     sup.add("lag_alert", lambda: lag_alert(hub))
+    clients = None
+    if os.environ.get("DESK_FEED") != "0":  # DESK_FEED=0: no market feed (tests, offline development)
+        import feed as feed_mod
+
+        pump, fallbacks, clients = feed_mod.build(hub, db)
+        sup.add("feed", pump.run)
+        sup.add("snapshots", fallbacks.snapshot_loop)
+        sup.add("feed_fallback", fallbacks.gecko_loop)
     sup.start()
 
     host, port = config.desk_host(), config.desk_port()
@@ -207,6 +215,8 @@ async def amain() -> int:
         log.error("API server could not start on %s:%s", host, port)
     finally:
         await sup.stop()
+        if clients is not None:
+            await clients.aclose()
         with contextlib.suppress(Exception):
             await db.write_heartbeats(hub.heartbeats.rows())
         await db.stop()

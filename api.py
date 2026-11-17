@@ -72,6 +72,7 @@ def create_app(db: Database, hub: Hub, token: str, supervisor=None, bad_token_de
                 "synchronous": db.writer_pragmas.get("synchronous"),
             },
             "restarts": list(getattr(supervisor, "restarts", []))[-20:],
+            **{name: fn() for name, fn in hub.status.items()},
         }
 
     app.include_router(api)

@@ -32,7 +32,7 @@ def http(url, token=None, timeout=3):
 def desk(tmp_path):
     port = osutil.free_port()
     env = {**os.environ, "DESK_DATA_DIR": str(tmp_path / "data"), "DESK_LOG_DIR": str(tmp_path / "logs"),
-           "DESK_PORT": str(port), "DESK_HOST": "0.0.0.0", "APP_TOKEN": TOKEN}
+           "DESK_PORT": str(port), "DESK_HOST": "0.0.0.0", "APP_TOKEN": TOKEN, "DESK_FEED": "0"}
     p = subprocess.Popen([sys.executable, str(ROOT / "main.py")], cwd=ROOT, env=env,
                          stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     for _ in range(100):
@@ -85,7 +85,7 @@ def test_pid_file_heartbeats_and_clean_stop(desk):
 def test_port_in_use_exits_nonzero(desk, tmp_path):
     _, port, _ = desk
     env = {**os.environ, "DESK_DATA_DIR": str(tmp_path / "d2"), "DESK_LOG_DIR": str(tmp_path / "l2"),
-           "DESK_PORT": str(port), "APP_TOKEN": TOKEN}
+           "DESK_PORT": str(port), "APP_TOKEN": TOKEN, "DESK_FEED": "0"}
     r = subprocess.run([sys.executable, str(ROOT / "main.py")], cwd=ROOT, env=env, capture_output=True, timeout=30)
     assert r.returncode != 0
 

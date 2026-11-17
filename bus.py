@@ -91,6 +91,11 @@ class Bus:
         self._seq = 0
         self._ring: deque[dict] = deque(maxlen=ring)
         self._subs: set[asyncio.Queue] = set()
+        self._callbacks: dict[str, list] = {}
+
+    def on(self, topic: str, fn) -> None:
+        """Synchronous callback run inside publish(). Keep it tiny (e.g. set an Event)."""
+        self._callbacks.setdefault(topic, []).append(fn)
 
     def publish(self, topic: str, data: dict | None = None) -> int:
         self._seq += 1
@@ -103,6 +108,11 @@ class Bus:
                 except asyncio.QueueEmpty:
                     pass
             q.put_nowait(ev)
+        for fn in self._callbacks.get(topic, ()):
+            try:
+                fn(ev)
+            except Exception:  # noqa: BLE001 - a bad listener must never break the publisher
+                pass
         return self._seq
 
     def recent(self, n: int = 100, topic: str | None = None) -> list[dict]:
@@ -125,6 +135,7 @@ class Hub:
         self.metrics = Metrics()
         self.heartbeats = Heartbeats(clock)
         self.lag = Samples()
+        self.status: dict = {}  # name -> callable returning a JSON-able dict, shown in /api/health (feed badge...)
 
 
 async def beating_sleep(hub: Hub, name: str, seconds: float, step: float = 20.0) -> None:
