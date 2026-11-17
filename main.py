@@ -200,11 +200,13 @@ async def amain() -> int:
         if os.environ.get("DESK_BOTS") != "0":  # DESK_BOTS=0: market feed only, no strategy bots
             import desk as desk_mod
 
-            pd = await desk_mod.build(hub, db, clients, fallbacks.dex)
+            pd = await desk_mod.build(hub, db, clients, fallbacks.dex, fallbacks=fallbacks, feed=pump)
             for name, bot in (("scanner", pd.scanner), ("analyst", pd.analyst), ("brain", pd.brain),
                               ("executor", pd.executor), ("risk", pd.risk)):
                 sup.add(name, bot.run)
             sup.add("browser_link", pd.browser_link)
+            if pd.orion is not None:
+                sup.add("orion", pd.orion.run)
     sup.start()
 
     host, port = config.desk_host(), config.desk_port()

@@ -148,7 +148,7 @@ def dig(d, *keys):
     return d
 
 
-def parse_pairs(pairs, now: float | None = None) -> dict[str, dict]:
+def parse_pairs(pairs, now: float | None = None, dexes: tuple = ("pumpswap",)) -> dict[str, dict]:
     """mint -> snapshot of the PUMPSWAP pair with the most liquidity. A mint DexScreener does not know is absent.
 
     liquidity_known tells 'DexScreener sent no liquidity at all' (a pair not indexed yet) apart from a real $0,
@@ -157,7 +157,7 @@ def parse_pairs(pairs, now: float | None = None) -> dict[str, dict]:
     now = time.time() if now is None else now
     best: dict[str, tuple[float, dict]] = {}
     for p in pairs or []:
-        if not isinstance(p, dict) or p.get("dexId") != "pumpswap":
+        if not isinstance(p, dict) or p.get("dexId") not in dexes:
             continue
         mint = dig(p, "baseToken", "address")
         if not mint:
@@ -193,11 +193,11 @@ class DexScreener:
         self.calls = 0
         self.last_ok: float | None = None
 
-    async def snapshots(self, mints: list[str]) -> dict[str, dict]:
+    async def snapshots(self, mints: list[str], dexes: tuple = ("pumpswap",)) -> dict[str, dict]:
         out: dict[str, dict] = {}
         todo = []
         for m in dict.fromkeys(mints):
-            hit = self.cache.get(m)
+            hit = self.cache.get((m, dexes))
             if hit is not None:
                 if hit != "unknown":
                     out[m] = hit
@@ -217,9 +217,9 @@ class DexScreener:
                 log.warning("DexScreener 429: waiting 30 s")
                 raise
             self.last_ok = self._clock()
-            found = parse_pairs(data if isinstance(data, list) else data.get("pairs") if isinstance(data, dict) else [])
+            found = parse_pairs(data if isinstance(data, list) else data.get("pairs") if isinstance(data, dict) else [], dexes=dexes)
             for m in batch:
-                self.cache.put(m, found.get(m, "unknown"))
+                self.cache.put((m, dexes), found.get(m, "unknown"))
                 if m in found:
                     out[m] = found[m]
         return out

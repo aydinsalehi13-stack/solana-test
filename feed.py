@@ -195,7 +195,9 @@ class PumpPortalFeed:
         if kind == "new_token":
             ev = {"mint": msg["mint"], "name": msg.get("name"), "symbol": msg.get("symbol"),
                   "creator": msg.get("traderPublicKey"), "pool": msg.get("pool"), "seen_at": time.time(),
-                  "v_sol": msg.get("vSolInBondingCurve"), "mcap_sol": msg.get("marketCapSol"), "late": False}
+                  "v_sol": msg.get("vSolInBondingCurve"), "v_tokens": msg.get("vTokensInBondingCurve"),
+                  "mcap_sol": msg.get("marketCapSol"), "initial_buy": msg.get("initialBuy"),
+                  "bonding_curve": msg.get("bondingCurveKey"), "late": False}
             if self.db is not None:
                 self.db.execute_nowait("INSERT OR IGNORE INTO new_tokens(mint, ts, name, symbol, creator) VALUES (?,?,?,?,?)",
                                        (ev["mint"], ev["seen_at"], ev["name"], ev["symbol"], ev["creator"]))
@@ -240,10 +242,11 @@ class Fallbacks:
     GeckoTerminal new pools (late, rate limited)."""
 
     def __init__(self, hub: Hub, feed: PumpPortalFeed, dex: sources.DexScreener, gecko: sources.GeckoTerminal, db=None,
-                 snapshot_every: float = 3.0, gecko_grace: float = 30.0, gecko_every: float = 8.0, gecko_idle: float = 2.0, clock=time.monotonic):
+                 snapshot_every: float = 3.0, snapshot_dexes: tuple = ("pumpfun", "pumpswap"), gecko_grace: float = 30.0, gecko_every: float = 8.0, gecko_idle: float = 2.0, clock=time.monotonic):
         self.hub, self.feed, self.dex, self.gecko, self.db = hub, feed, dex, gecko, db
         self.snapshot_every, self.gecko_grace, self.gecko_every, self._clock = snapshot_every, gecko_grace, gecko_every, clock
         self.gecko_idle = gecko_idle
+        self.snapshot_dexes = snapshot_dexes
         self.watch: list[str] = []
         self._seen_gecko: set[str] = set()
         self._down_since: float | None = None
@@ -265,7 +268,7 @@ class Fallbacks:
         while True:
             if self.watch:
                 try:
-                    snaps = await self.dex.snapshots(self.watch)
+                    snaps = await self.dex.snapshots(self.watch, dexes=self.snapshot_dexes)
                     self.snapshot_ok = self._clock()
                     for s in snaps.values():
                         self.hub.bus.publish("snapshot", s)

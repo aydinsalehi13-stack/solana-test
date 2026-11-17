@@ -30,8 +30,9 @@ def body_for(endpoint: str, mint: str):
 
 
 class PromptDesk:
-    def __init__(self, deps: Deps, scanner: Scanner, analyst: Analyst, brain: Brain, executor: Executor, risk: Risk):
+    def __init__(self, deps: Deps, scanner: Scanner, analyst: Analyst, brain: Brain, executor: Executor, risk: Risk, orion=None):
         self.d, self.scanner, self.analyst, self.brain, self.executor, self.risk = deps, scanner, analyst, brain, executor, risk
+        self.orion = orion
 
     async def browser_link(self) -> None:
         """Keep trying to attach to the desk Chrome. Without it there is no quote, so no paper fill (honest skip)."""
@@ -57,10 +58,12 @@ class PromptDesk:
             await beating_sleep(self.d.hub, "browser_link", 30.0)
 
 
-async def build(hub, db, clients: sources.Clients, dex: sources.DexScreener, clock=time.time) -> PromptDesk:
+async def build(hub, db, clients: sources.Clients, dex: sources.DexScreener, clock=time.time, fallbacks=None, feed=None) -> PromptDesk:
     settings = await Settings.load(db)
     book = PaperBook(db, hub, settings, clock)
     await book.load()
+    if not await db.fetchone("SELECT id FROM balance WHERE strategy=? LIMIT 1", (book.strategy,)):
+        await book.snapshot()  # an opening balance row, so the dashboard shows the bank from the first minute
     session = Session(db, settings, book, clock)
     await session.open()
     session.mark_lock_checked_today()
@@ -79,4 +82,9 @@ async def build(hub, db, clients: sources.Clients, dex: sources.DexScreener, clo
     hub.status["prompt"] = lambda: {"cash": round(book.cash, 2), "open": len(book.positions), "waiting": len(book.waiting),
                                    "room": len(scanner.room), "trades_tonight": session.trades,
                                    "browser": deps.browser is not None}
-    return PromptDesk(deps, scanner, analyst, brain, executor, risk)
+    orion = None
+    if os.environ.get("DESK_ORION") != "0":  # the fast strategy has its own bank and never touches FOMO web
+        from bots.orion import Orion
+
+        orion = Orion(deps, fallbacks, feed)
+    return PromptDesk(deps, scanner, analyst, brain, executor, risk, orion)
