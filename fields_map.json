@@ -1,0 +1,29 @@
+{
+  "_note": "Exact key per field the bots need. path=null means not mapped yet; confirmed=true only after checking a real sample in logs/raw/ (python fields.py). Paths named here come from the spec's own wording and are NOT confirmed.",
+  "fields": {
+    "user.id":              {"source": "userHandle",    "path": null, "confirmed": false},
+    "user.address":         {"source": "userHandle",    "path": null, "confirmed": false},
+    "balances.cash":        {"source": "balances",      "path": null, "confirmed": false},
+    "balances.positions":   {"source": "balances",      "path": null, "confirmed": false},
+    "swap.side":            {"source": "swaps",         "path": null, "confirmed": false},
+    "swap.mint":            {"source": "swaps",         "path": null, "confirmed": false},
+    "swap.usd":             {"source": "swaps",         "path": null, "confirmed": false},
+    "swap.in_symbol":       {"source": "swaps",         "path": null, "confirmed": false},
+    "swap.out_symbol":      {"source": "swaps",         "path": null, "confirmed": false},
+    "swap.ts":              {"source": "swaps",         "path": null, "confirmed": false},
+    "token.mcap":           {"source": "filterTokens",  "path": null, "confirmed": false},
+    "token.liquidity":      {"source": "filterTokens",  "path": null, "confirmed": false},
+    "token.holders":        {"source": "filterTokens",  "path": null, "confirmed": false},
+    "details.unique_buys_5m":  {"source": "tokenDetails", "path": null, "confirmed": false},
+    "details.unique_sells_5m": {"source": "tokenDetails", "path": null, "confirmed": false},
+    "details.unique_buys_1h":  {"source": "tokenDetails", "path": null, "confirmed": false},
+    "details.unique_sells_1h": {"source": "tokenDetails", "path": null, "confirmed": false},
+    "details.holders":         {"source": "tokenDetails", "path": "holders", "confirmed": false},
+    "details.top10_pct":       {"source": "tokenDetails", "path": "top10HoldersPercent", "confirmed": false},
+    "warnings.disable_buying":  {"source": "tokenWarnings", "path": "disableBuying", "confirmed": false},
+    "warnings.disable_selling": {"source": "tokenWarnings", "path": "disableSelling", "confirmed": false},
+    "warnings.list":            {"source": "tokenWarnings", "path": "warnings", "confirmed": false},
+    "leaderboard.rows":      {"source": "leaderboard",  "path": null, "confirmed": false},
+    "hodlers.top":           {"source": "hodlers",      "path": null, "confirmed": false}
+  }
+}

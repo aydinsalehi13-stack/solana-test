@@ -1,0 +1,48 @@
+<!doctype html><html><head><meta charset="utf-8"><title>mock</title>
+<style>body{font:14px sans-serif;margin:0}header{display:flex;gap:12px;align-items:center;height:60px;padding:0 16px;border-bottom:1px solid #ccc}
+main{display:flex;gap:24px;padding:16px}.left{width:900px}.panel{width:340px;border:1px solid #ccc;padding:12px}button{padding:6px 10px}
+.tiles{display:flex;gap:16px;flex-wrap:wrap}.tile b{display:block}</style></head><body>
+<header><input placeholder="Search tokens"><button id="paste">Paste</button>
+ <a href="/tokens">Tokens</a><a href="/perps">Perps</a><a href="/leaderboard">Leaderboard</a><a href="/feed">Feed</a>
+ <span id="cash" style="margin-left:auto">$150.00</span><button id="depositmore">Deposit more</button>
+ <img alt="avatar" width="32" height="32" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></header>
+<main><div class="left">
+ <div class="tiles"><div class="tile">Market cap<b>$1.2M</b></div><div class="tile">Price<b>$0.00012</b></div>
+  <div class="tile">24H change<b>+4%</b></div><div class="tile">24H Vol.<b>$88K</b></div>
+  <div class="tile">Liquidity<b>$41K</b></div><div class="tile">Holders<b>812</b></div><div class="tile">Top 10 holding<b>14%</b></div></div>
+ <canvas id="chart" width="800" height="300" style="margin-top:12px"></canvas>
+ <h3>About</h3><div>Contract address <span id="ca"></span></div>
+ <h3>Your positions</h3><div id="pos"></div>
+ <p><a id="wd" href="#">Withdraw</a> <a id="dp" href="#">Deposit</a> <a href="https://evil.example.com/x">Discover</a></p>
+</div>
+<div class="panel"><div><button id="tabbuy">Buy</button><button id="tabsell">Sell</button></div>
+ <div id="presets"></div>
+ <div>$ <input id="amt" placeholder="Enter amount"></div>
+ <div id="q"></div><div id="fee"></div>
+ <div id="boxwrap"></div>
+ <button id="primary">Buy PAWS</button></div></main>
+<script>
+const Q=new URLSearchParams(location.search), P=new URLSearchParams(window.__FLAGS||''), A=Q.get('address')||'', side={v:'buy'};
+document.getElementById('ca').textContent=A.slice(0,6)+'...'+A.slice(-6);
+const c=document.getElementById('chart').getContext('2d');c.fillStyle='#111';c.fillRect(0,0,800,300);c.strokeStyle='#0f0';c.beginPath();
+for(let i=0;i<80;i++){c.lineTo(i*10,150+Math.sin(i/3)*80+Math.random()*30)}c.stroke();
+window.__primaryClicks=0;
+const amt=document.getElementById('amt'),q=document.getElementById('q'),fee=document.getElementById('fee'),pr=document.getElementById('primary');
+if(P.get('pos')){document.getElementById('pos').textContent='PAWS $'+(P.get('pos')==='small'?'1.20':'20.00')}
+if(P.get('box')){document.getElementById('boxwrap').innerHTML='<label><input type="checkbox"> I accept the risk</label>'}
+if(P.get('cash')==='0'){pr.textContent='Buy with Apple Pay'}
+function setSide(s){side.v=s;pr.textContent=s==='buy'?(P.get('cash')==='0'?'Buy with Apple Pay':'Buy PAWS'):'Sell PAWS';
+ const pb=document.getElementById('presets');pb.innerHTML='';
+ (s==='buy'?['$10','$100','$500','$1000']:['10%','25%','50%','100%','Max']).forEach(t=>{const b=document.createElement('button');b.textContent=t;
+  b.onclick=()=>{amt.value=s==='buy'?t.slice(1):(t==='Max'?'20':String(20*parseInt(t)/100));requote()};pb.appendChild(b)});q.textContent='';fee.textContent=''}
+function requote(){q.textContent='';fee.textContent='';
+ if(side.v==='sell'&&P.get('pos')==='small'){q.textContent='Minimum amount $2';return}
+ if(P.get('impact')){q.textContent='Price impact too high';return}
+ if(P.get('slow')){q.textContent='Fetching quote…';return}
+ q.textContent='Fetching quote…';setTimeout(()=>{q.textContent='44K PAWS (-0.61%)';fee.textContent='$0.36 fee'},350)}
+amt.addEventListener('input',()=>{if(P.get('mismatch')&&amt.value.length>2){amt.value='9'}requote()});
+document.getElementById('tabbuy').onclick=()=>setSide('buy');document.getElementById('tabsell').onclick=()=>setSide('sell');
+pr.onclick=()=>{window.__primaryClicks++;fetch('/__primary?side='+side.v)};
+document.getElementById('wd').onclick=()=>{fetch('/__withdraw')};document.getElementById('depositmore').onclick=()=>{fetch('/__deposit')};
+setSide('buy');
+</script></body></html>
