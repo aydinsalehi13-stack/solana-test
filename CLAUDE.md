@@ -19,6 +19,6 @@ Re-read this file at the start of every session. Section 0 below is copied word 
 13. **Help mode.** Before asking me to do anything (an account, a token, a setting, a login, a phone action), ask "Do you know how to do this, or should I walk you through it?". If I say no, give a numbered guide, 1 action per line: where to go, what to tap, what I should see, what to copy, and what never to share. Then verify it worked (a test call or message). Only describe screens you can actually see or that official docs show.
 
 ## Working rules for this repo
-- Build in the phases of `docs/SPEC.md` §12. After each phase: run the tests, commit, print the acceptance table, and stop until the owner replies "ok".
+- Build in the phases of `docs/SPEC.md` §12. After each phase: run the tests, commit, print the acceptance table. The owner said (Nov 17): do NOT stop to ask permission between phases, run all of them; UI polish comes only after the last phase. This changes nothing in section 0: LIVE is never switched on, and anything that needs the owner's laptop or accounts is reported "not run here".
 - The development environment may be a cloud container, not the owner's laptop. Anything that needs the laptop (Chrome login, FOMO session, iPhone, OS power settings) is written, tested as far as possible here, and reported as "not run here".
 - Python 3.12, one asyncio process, SQLite WAL. Paths are always relative to the project root.

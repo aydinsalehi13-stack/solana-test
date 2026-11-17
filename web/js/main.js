@@ -159,6 +159,21 @@
     window.addEventListener('resize', () => D.$$('.grid > *').forEach(span));
   }
 
+  /* ---------- a night report link (#report=2026-11-18): fetched with the token, shown without scripts ---------- */
+  async function openReportFromHash() {
+    const m = /^#report=(\d{4}-\d{2}-\d{2})$/.exec(location.hash);
+    if (!m || !D.token()) return;
+    try {
+      const r = await D.fetch('/api/report/' + m[1]);
+      if (!r.ok) { D.toast('No report for ' + m[1], 'bad'); return; }
+      D.$('#report-title').textContent = 'Night report ' + m[1];
+      D.$('#report-frame').srcdoc = await r.text();
+      if (!D.$('#report').open) D.$('#report').showModal();
+    } catch (e) { if (!(e instanceof D.AuthError)) D.toast('Could not load the report', 'bad'); }
+  }
+  window.addEventListener('hashchange', openReportFromHash);
+  D.$('#report-close').addEventListener('click', () => { D.$('#report').close(); history.replaceState(null, '', location.pathname); });
+
   /* ---------- start ---------- */
   let inited = false;
   function start() {
@@ -174,6 +189,7 @@
     }
     poll();
     D.startStream();
+    openReportFromHash();
   }
 
   D.theme.set(D.theme.get());

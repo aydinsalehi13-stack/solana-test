@@ -46,7 +46,7 @@ class Env:
     async def page(self, width=1440, height=900, mobile=False, token=TOKEN, **ctx_kw):
         ctx = await self.browser.new_context(viewport={"width": width, "height": height}, device_scale_factor=1, is_mobile=mobile, has_touch=mobile, **ctx_kw)
         if token:
-            await ctx.add_init_script(f"localStorage.setItem('desk_token', '{token}')")
+            await ctx.add_init_script(f"try {{ localStorage.setItem('desk_token', '{token}') }} catch (e) {{}}")  # the sandboxed report frame has no storage
         page = await ctx.new_page()
         page.errors = []
         page.on("console", lambda m: page.errors.append(m.text) if m.type == "error" else None)
@@ -159,7 +159,7 @@ async def test_desktop_1440_every_panel_is_fed_by_the_desk(env):
     assert await page.locator("#audit .disc").count() == 8 and "Revoked" in await t("#audit")
     assert await page.locator("#kills .bar").count() >= 5 and await page.locator("#health li").count() >= 6
     assert "analyst.layer8" in await t("#speed") and "loop lag p95" in await t("#lag-chip")
-    assert "17" in await t("#recap") and "fluffcore3" in await t("#account") and await page.locator("#settings details").count() == 7
+    assert "17" in await t("#recap") and "fluffcore3" in await t("#account") and await page.locator("#settings details").count() == 8
     assert await t("#feed-badge") == "PumpPortal live" and await t("#mode-pill") == "PAPER"
     assert not await page.is_visible("#tabbar")  # the tab bar is for phones only
     assert not await page.is_visible("#offline") and await page.locator(".skeleton").count() == 0

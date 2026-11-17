@@ -228,8 +228,8 @@
         D.h('button', { class: 'btn', type: 'button', style: 'margin-top:14px', text: 'Switch dark and light theme', onclick: () => D.theme.toggle() }));
     } catch (e) { if (!(e instanceof D.AuthError)) D.$('#account').textContent = 'Could not load the account: ' + e.message; }
   };
-  const GROUPS = ['session', 'scanner', 'analyst', 'brain', 'executor', 'risk', 'fees'];
-  const GROUP_NAME = { session: 'Session and cash', scanner: 'Scanner', analyst: 'Analyst', brain: 'Brain', executor: 'Executor', risk: 'Risk', fees: 'Paper fees' };
+  const GROUPS = ['session', 'scanner', 'analyst', 'brain', 'executor', 'risk', 'fees', 'telegram'];
+  const GROUP_NAME = { session: 'Session and cash', scanner: 'Scanner', analyst: 'Analyst', brain: 'Brain', executor: 'Executor', risk: 'Risk', fees: 'Paper fees', telegram: 'Telegram' };
   P.settings = async () => {
     try {
       const { settings } = await D.json('/api/settings');

@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS strat_positions (
   exit_rule TEXT, data TEXT);
 CREATE TABLE IF NOT EXISTS strat_balance (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, strategy TEXT NOT NULL, cash_usd REAL, equity_usd REAL);
+CREATE TABLE IF NOT EXISTS uptime_segments (id INTEGER PRIMARY KEY AUTOINCREMENT, start_ts REAL NOT NULL, end_ts REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS metrics_log (ts REAL PRIMARY KEY, lag_p95_ms REAL, lag_max_ms REAL, restarts INTEGER);
 CREATE TABLE IF NOT EXISTS strat_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, strategy TEXT NOT NULL, mint TEXT, kind TEXT, data TEXT);
 """
@@ -283,6 +285,19 @@ class Database:
     async def get_setting(self, key: str, default=None):
         row = await self.fetchone("SELECT value FROM settings WHERE key=?", (key,))
         return row["value"] if row else default
+
+    async def record_uptime(self, now: float, max_gap: float = 90.0) -> None:
+        """Coverage = the time the desk really ran. A segment is extended while beats arrive within max_gap seconds of each other;
+        a longer silence (the laptop slept, the process was dead) starts a new segment, so that gap is never counted."""
+        last = await self.fetchone("SELECT id, end_ts FROM uptime_segments ORDER BY id DESC LIMIT 1")
+        if last and now - last["end_ts"] <= max_gap:
+            await self.execute("UPDATE uptime_segments SET end_ts=? WHERE id=?", (now, last["id"]))
+        else:
+            await self.execute("INSERT INTO uptime_segments(start_ts, end_ts) VALUES (?,?)", (now, now))
+
+    async def coverage_seconds(self, start: float, end: float) -> float:
+        rows = await self.fetchall("SELECT start_ts, end_ts FROM uptime_segments WHERE end_ts >= ? AND start_ts <= ?", (start, end))
+        return sum(max(0.0, min(r["end_ts"], end) - max(r["start_ts"], start)) for r in rows)
 
     async def write_heartbeats(self, rows: list[tuple[str, float, str]]) -> None:
         if rows:

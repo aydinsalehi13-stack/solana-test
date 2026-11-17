@@ -101,7 +101,12 @@ REGISTRY: list[Spec] = [
     _s("slippage_pct", 0.5, 0, 10, "fees", "Slippage, bonding-curve fills (%)"),
     _s("impact_pct", 0.5, 0, 10, "fees", "AMM impact, bonding-curve fills (%)"),
 ]
-BY_KEY = {s.key: s for s in REGISTRY}
+# Owner settings that are NOT part of the frozen "prompt" strategy (so strategies/prompt.json does not contain them).
+EXTRA: list[Spec] = [
+    _s("live_interval_min", 5, 1, 120, "telegram", "Dashboard screenshot to Telegram every (min)"),
+]
+ALL: list[Spec] = REGISTRY + EXTRA
+BY_KEY = {s.key: s for s in ALL}
 
 
 def defaults() -> dict:
@@ -135,7 +140,7 @@ class Settings:
     """Defaults plus the owner's validated overrides (from the settings table)."""
 
     def __init__(self, overrides: dict | None = None):
-        self._v = defaults()
+        self._v = {s.key: s.default for s in ALL}
         for k, v in (overrides or {}).items():
             if k in BY_KEY:
                 self._v[k] = validate(k, v)

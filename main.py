@@ -47,9 +47,9 @@ class Supervisor:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    def _note(self, name: str, reason: str) -> None:
-        self.restarts.append({"ts": self.clock(), "bot": name, "reason": reason})
-        self.hub.bus.publish("restart", {"bot": name, "reason": reason})
+    def _note(self, name: str, reason: str, down_s: float = 1.0) -> None:
+        self.restarts.append({"ts": self.clock(), "bot": name, "reason": reason, "down_s": down_s})
+        self.hub.bus.publish("restart", {"bot": name, "reason": reason, "down_s": down_s})
         log.warning("restarting %s: %s", name, reason)
 
     async def _runner(self, name: str) -> None:
@@ -82,7 +82,7 @@ class Supervisor:
             inner = self.inner.get(name)
             if inner is None or inner.done():
                 continue
-            self._note(name, f"stale {self.hub.heartbeats.age(name):.0f}s")
+            self._note(name, f"stale {self.hub.heartbeats.age(name):.0f}s", self.hub.heartbeats.age(name))
             self.hub.heartbeats.beat(name)
             inner.cancel()
         return stale
@@ -98,9 +98,18 @@ class Supervisor:
             self.check_stale()
 
 
-async def heartbeat_writer(hub: Hub, db, interval: float = HEARTBEAT_DB_S) -> None:
+async def heartbeat_writer(hub: Hub, db, interval: float = HEARTBEAT_DB_S, supervisor=None) -> None:
+    last_metric = 0.0
     while True:
+        now = time.time()
         await db.write_heartbeats(hub.heartbeats.rows())
+        await db.record_uptime(now)  # coverage: only time the desk really ran counts
+        if now - last_metric >= 60:  # one line a minute for the night check (loop lag, restarts)
+            last_metric = now
+            snap = hub.lag.snapshot()
+            if snap["n"]:
+                await db.execute("INSERT OR REPLACE INTO metrics_log(ts, lag_p95_ms, lag_max_ms, restarts) VALUES (?,?,?,?)",
+                                 (now, snap["p95"], snap["max"], len(getattr(supervisor, "restarts", []))))
         await beating_sleep(hub, "heartbeat_writer", interval)
 
 
@@ -186,10 +195,11 @@ async def amain() -> int:
 
     sup = Supervisor(hub)
     sup.add("loop", lambda: lag_monitor(hub))
-    sup.add("heartbeat_writer", lambda: heartbeat_writer(hub, db))
+    sup.add("heartbeat_writer", lambda: heartbeat_writer(hub, db, supervisor=sup))
     sup.add("retention", lambda: retention_task(hub, db))
     sup.add("lag_alert", lambda: lag_alert(hub))
     clients = None
+    pd = None
     if os.environ.get("DESK_FEED") != "0":  # DESK_FEED=0: no market feed (tests, offline development)
         import feed as feed_mod
 
@@ -207,6 +217,8 @@ async def amain() -> int:
             sup.add("browser_link", pd.browser_link)
             if pd.orion is not None:
                 sup.add("orion", pd.orion.run)
+            for name, fn in pd.extra:
+                sup.add(name, fn)
     sup.start()
 
     host, port = config.desk_host(), config.desk_port()
@@ -226,6 +238,11 @@ async def amain() -> int:
         log.error("API server could not start on %s:%s", host, port)
     finally:
         await sup.stop()
+        for hook in (pd.stop_hooks if pd is not None else []):
+            with contextlib.suppress(Exception):
+                res = hook()
+                if asyncio.iscoroutine(res):
+                    await res
         if clients is not None:
             await clients.aclose()
         with contextlib.suppress(Exception):

@@ -33,6 +33,8 @@ class PromptDesk:
     def __init__(self, deps: Deps, scanner: Scanner, analyst: Analyst, brain: Brain, executor: Executor, risk: Risk, orion=None):
         self.d, self.scanner, self.analyst, self.brain, self.executor, self.risk = deps, scanner, analyst, brain, executor, risk
         self.orion = orion
+        self.extra: list = []  # (name, coroutine function) supervised alongside the bots (Telegram, reports)
+        self.stop_hooks: list = []  # called on shutdown (the screenshot thread)
 
     async def browser_link(self) -> None:
         """Keep trying to attach to the desk Chrome. Without it there is no quote, so no paper fill (honest skip)."""
@@ -96,5 +98,45 @@ async def build(hub, db, clients: sources.Clients, dex: sources.DexScreener, clo
                 out[m] = {"price": mm.price_usd if mm else None, "tokens": p["tokens"], "realized": p["proceeds"]}
         return out
 
-    hub.objects.update(settings=settings, book=book, marks=marks, risk_pausable=risk.pausable, orion=orion)
-    return PromptDesk(deps, scanner, analyst, brain, executor, risk, orion)
+    def brain_size(payload: dict):
+        """What the Brain would size for an audited coin (used by the Telegram 'buy X' preview)."""
+        from bots.brain import size_trade
+
+        return size_trade(book.free_cash(), payload["score"], payload.get("pool_liq"), settings, shill=bool(payload.get("shill")),
+                          trades_tonight=session.trades, night_loss_pct=session.loss_pct(book.equity({})))
+
+    hub.objects.update(settings=settings, book=book, marks=marks, risk_pausable=risk.pausable, orion=orion, analyst=analyst,
+                       brain_size=brain_size, rpc=deps.rpc)
+    pd = PromptDesk(deps, scanner, analyst, brain, executor, risk, orion)
+    _attach_telegram(pd, hub, db, clock)
+    return pd
+
+
+def _attach_telegram(pd: PromptDesk, hub, db, clock) -> None:
+    """Telegram, the 08:00 report and the screenshot thread. Only when TELEGRAM_BOT_TOKEN is in .env."""
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    if not token:
+        return
+    import logging as _logging
+
+    import chrome_launcher
+    import live
+    import osutil
+    import telegram as tg
+
+    client = tg.TelegramClient(token)
+    ip = osutil.lan_ip()
+    lan = f"http://{ip or '127.0.0.1'}:{config.desk_port()}" if config.desk_host() not in ("127.0.0.1", "localhost") else None
+    bot = tg.DeskBot(client, db, hub, clock, lan)
+    errors = tg.ErrorCounter()
+    _logging.getLogger("desk").addHandler(errors)
+    no_chrome = os.environ.get("DESK_NO_CHROME") == "1"
+    health = tg.HealthWatcher(hub, errors, cdp_check=None if no_chrome else (lambda: chrome_launcher.cdp_alive() is not None))
+    notifier = tg.Notifier(client, bot, hub, health)
+    shots = live.LiveShots(api_url=f"http://127.0.0.1:{config.desk_port()}", token=os.environ.get("APP_TOKEN", ""), bot_token=token, db_path=config.DB_PATH)
+    hub.objects["live_shots"] = shots
+    for topic in ("trade_open", "trade_close", "trade_partial"):
+        hub.bus.on(topic, lambda ev: shots.request_now("order"))  # a screenshot on every order (debounced inside)
+    shots.start()
+    pd.extra += [("telegram", lambda: tg.poll_loop(bot, hub)), ("notifier", notifier.run), ("report_job", lambda: tg.report_job(bot, hub, clock))]
+    pd.stop_hooks += [lambda: asyncio.to_thread(shots.stop), client.aclose]  # the thread's join must not block the loop

@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 import config
+import gates as gates_mod
 import links
 import settings as st
 import stats
@@ -340,6 +341,33 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
             return JSONResponse({"state": "waiting", "message": "Waiting for the desk Chrome"})
         return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
+    # ---- reports (behind the token like everything else) ----------------------------------------------------------------------------------
+    @api.get("/reports")
+    async def list_reports():
+        d = config.ROOT / "reports"
+        return {"reports": sorted((p.stem.split("_", 1)[1] for p in d.glob("night_*.html")), reverse=True) if d.exists() else []}
+
+    @api.get("/report/{date}")
+    async def get_report(date: str):
+        import report
+
+        if not report.NIGHT_RE.match(date):
+            raise HTTPException(400, "date must look like 2026-11-18")
+        p = config.ROOT / "reports" / f"night_{date}.html"
+        if not p.exists():
+            raise HTTPException(404, "no report for that night")
+        from fastapi.responses import HTMLResponse
+
+        return HTMLResponse(p.read_text(encoding="utf-8"))
+
+    @api.post("/report/generate")
+    async def make_report():
+        import report
+
+        gen = objects.get("report_fn")
+        res = await (gen() if gen else report.build_night_report(db, hub))
+        return {k: res[k] for k in ("date", "summary", "coverage_pct", "trades")}
+
     # ---- account / settings / mode ---------------------------------------------------------------------------------------------------------
     @api.get("/account")
     async def account():
@@ -356,7 +384,7 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
         s = await settings_obj()
         return {"settings": [{"key": x.key, "label": x.label, "group": x.group, "value": s[x.key], "default": x.default,
                               "lo": x.lo, "hi": x.hi, "kind": "bool" if isinstance(x.default, bool) else "time" if isinstance(x.default, str) else "number"}
-                             for x in st.REGISTRY]}
+                             for x in st.ALL]}
 
     @api.post("/settings")
     async def post_settings(body: SettingBody):
@@ -368,16 +396,7 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
         return {"key": body.key, "old": old, "new": new}
 
     async def gates() -> list[dict]:
-        nights = await db.fetchone("SELECT COUNT(*) n FROM nights WHERE ended_at IS NOT NULL")
-        def flag(name):
-            p = config.DATA_DIR / name
-            try:
-                return bool(json.loads(p.read_text()).get("passed"))
-            except (OSError, ValueError):
-                return False
-        return [{"gate": "one full PAPER night in the database", "met": (nights["n"] or 0) >= 1},
-                {"gate": "the acceptance suite passed", "met": flag("acceptance.json")},
-                {"gate": "a $2 LIVE test trade approved by the owner, verified both ways", "met": flag("live_test.json")}]
+        return await gates_mod.live_gates(db)
 
     @api.get("/mode")
     async def get_mode():
