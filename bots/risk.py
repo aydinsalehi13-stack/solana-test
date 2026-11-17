@@ -147,6 +147,9 @@ class Risk:
         while True:
             self.d.hub.heartbeats.beat("risk")
             t0 = time.monotonic()
+            if "risk" in self.d.hub.paused and self.pausable():
+                await beating_sleep(self.d.hub, "risk", 1.0, step=1.0)
+                continue
             try:
                 if self.d.session and self.d.session.lock_due():
                     n = await self.ex.sell_all("lock time")

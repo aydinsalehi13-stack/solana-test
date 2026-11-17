@@ -136,6 +136,8 @@ class Hub:
         self.heartbeats = Heartbeats(clock)
         self.lag = Samples()
         self.status: dict = {}  # name -> callable returning a JSON-able dict, shown in /api/health (feed badge...)
+        self.objects: dict = {}  # shared handles the API needs (settings, book, orion...): set by desk.build
+        self.paused: set[str] = set()  # bots the owner paused from the dashboard
 
 
 async def beating_sleep(hub: Hub, name: str, seconds: float, step: float = 20.0) -> None:
@@ -147,6 +149,13 @@ async def beating_sleep(hub: Hub, name: str, seconds: float, step: float = 20.0)
         if left <= 0:
             return
         await asyncio.sleep(min(step, left))
+
+
+async def wait_if_paused(hub: Hub, name: str) -> None:
+    """A paused bot idles (still beating) until the owner resumes it."""
+    while name in hub.paused:
+        hub.heartbeats.beat(name)
+        await asyncio.sleep(1.0)
 
 
 async def lag_monitor(hub: Hub, interval: float = 0.1, name: str = "loop") -> None:

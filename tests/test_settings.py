@@ -92,4 +92,4 @@ def test_no_code_path_changes_settings_except_settings_set():
         if ".venv" in f.parts or "tests" in f.parts or f.name in allowed:
             continue
         t = f.read_text()
-        assert not re.search(r"settings\._v\[|\.set\(db,", t) or f.name in ("api.py",), f.name
+        assert not re.search(r"settings\._v\[|\.set\(db,", t) or f.name in ("api.py", "api_dash.py"), f.name  # the dashboard's owner-authenticated POST /api/settings

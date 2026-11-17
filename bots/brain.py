@@ -72,9 +72,10 @@ class Brain:
         return sz
 
     async def run(self) -> None:
-        from bus import beating_sleep
+        from bus import wait_if_paused
 
         while True:
+            await wait_if_paused(self.d.hub, "brain")
             try:
                 a = await asyncio.wait_for(self.q.get(), timeout=20)
             except asyncio.TimeoutError:

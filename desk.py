@@ -49,6 +49,7 @@ class PromptDesk:
                     page = await b.ensure_page()
                     fomo_api.attach_request_recorder(page)
                     self.d.browser = b
+                    self.d.hub.status["lane"] = lambda b=b: {"holder": b.lane.holder}
                     self.d.fomo = fomo_api.FomoApi(fomo_api.page_fetcher(b.get_page), self.d.hub)
                     log.info("attached to the desk Chrome")
                 except Exception as e:  # noqa: BLE001
@@ -87,4 +88,13 @@ async def build(hub, db, clients: sources.Clients, dex: sources.DexScreener, clo
         from bots.orion import Orion
 
         orion = Orion(deps, fallbacks, feed)
+    def marks() -> dict:
+        out = {m: {"price": book.last_prices.get(m), "tokens": p.tokens, "realized": p.realized_usd} for m, p in book.positions.items()}
+        if orion is not None:
+            for m, p in orion.engine.positions.items():
+                mm = orion.engine.mints.get(m)
+                out[m] = {"price": mm.price_usd if mm else None, "tokens": p["tokens"], "realized": p["proceeds"]}
+        return out
+
+    hub.objects.update(settings=settings, book=book, marks=marks, risk_pausable=risk.pausable, orion=orion)
     return PromptDesk(deps, scanner, analyst, brain, executor, risk, orion)

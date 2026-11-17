@@ -211,7 +211,8 @@ async def amain() -> int:
 
     host, port = config.desk_host(), config.desk_port()
     server = _make_server_class()(
-        uvicorn.Config(create_app(db, hub, token, sup), host=host, port=port, log_level="warning", access_log=False)
+        uvicorn.Config(create_app(db, hub, token, sup), host=host, port=port, log_level="warning", access_log=False,
+                       timeout_graceful_shutdown=3)  # an open dashboard stream must never keep the desk from stopping
     )
     _install_stop_signals(server)
     shown = osutil.lan_ip() or host if host in ("0.0.0.0", "::") else host

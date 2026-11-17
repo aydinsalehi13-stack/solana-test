@@ -58,26 +58,6 @@ def create_app(db: Database, hub: Hub, token: str, supervisor=None, bad_token_de
             "strategies": [],  # no strategy has run yet: "no data", never an invented balance
         }
 
-    @api.get("/live")
-    async def live():
-        """One payload for the dashboard: both strategies side by side, the feed, the speed panel, recent decisions."""
-        import stats
-        from settings import Settings
-
-        start = float((await Settings.load(db))["paper_start_cash"])
-        decisions = await db.fetchall("SELECT ts, bot, mint, symbol, decision, reason, value, strategy FROM decisions ORDER BY id DESC LIMIT 40")
-        return {
-            "mode": await db.get_setting("mode", config.DEFAULT_MODE),
-            "ts": time.time(),
-            "strategies": await stats.strategy_cards(db, start),
-            "feed": hub.status["feed"]() if "feed" in hub.status else None,
-            "stages": hub.metrics.snapshot(),
-            "loop_lag_ms": hub.lag.snapshot(),
-            "bots": {k: round(v, 1) for k, v in hub.heartbeats.ages().items()},
-            "decisions": decisions,
-            "engines": {k: fn() for k, fn in hub.status.items() if k in ("prompt", "orion_fast")},
-        }
-
     @api.get("/health")
     async def health():
         ages = hub.heartbeats.ages()
@@ -95,6 +75,9 @@ def create_app(db: Database, hub: Hub, token: str, supervisor=None, bad_token_de
             **{name: fn() for name, fn in hub.status.items()},
         }
 
+    import api_dash
+
+    api_dash.mount(api, db, hub, supervisor)
     app.include_router(api)
 
     @app.middleware("http")
@@ -108,5 +91,10 @@ def create_app(db: Database, hub: Hub, token: str, supervisor=None, bad_token_de
     @app.exception_handler(HTTPException)
     async def http_exc(request: Request, exc: HTTPException):
         return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+
+    # The dashboard itself (plain HTML/CSS/JS). It holds no data and no secrets: the token is typed into its login screen.
+    from fastapi.staticfiles import StaticFiles
+
+    app.mount("/", StaticFiles(directory=str(config.ROOT / "web"), html=True, check_dir=False), name="web")
 
     return app

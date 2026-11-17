@@ -100,6 +100,7 @@ class Executor:
     def __init__(self, deps: Deps):
         self.d = deps
         self.q = subscribe_queue(deps.hub, "order_request")
+        self.q_sell = subscribe_queue(deps.hub, "manual_sell")
         self.hist: dict[str, deque] = {}  # mint -> (ts, price) over the dip window
         self._busy: set[str] = set()
 
@@ -319,15 +320,29 @@ class Executor:
                 log.warning("lock-time sell of %s skipped: %s", mint[:6], e)
         return n
 
+    async def manual_sell(self, req: dict) -> dict | None:
+        """Owner's 'Sell now' from the dashboard (25/50/100%). PAPER: simulated at the last real price, minus fees."""
+        d, mint = self.d, req["mint"]
+        if mint not in d.book.positions:
+            return None
+        return await self.close(mint, int(req["pct"]), "manual sell", None, bot="executor")
+
     async def run(self) -> None:
+        from bus import beating_sleep, wait_if_paused
+
         while True:
-            try:
-                req = await asyncio.wait_for(self.q.get(), timeout=20)
-            except asyncio.TimeoutError:
-                self.d.hub.heartbeats.beat("executor")
-                continue
+            await wait_if_paused(self.d.hub, "executor")
             self.d.hub.heartbeats.beat("executor")
-            try:
-                await self.place_dip_order(req)
-            except Exception as e:  # noqa: BLE001
-                log.exception("executor failed on %s: %s", req.get("mint"), e)
+            did = False
+            for q, handler in ((self.q, self.place_dip_order), (self.q_sell, self.manual_sell)):
+                try:
+                    req = q.get_nowait()
+                except asyncio.QueueEmpty:
+                    continue
+                did = True
+                try:
+                    await handler(req)
+                except Exception as e:  # noqa: BLE001
+                    log.exception("executor failed on %s: %s", req.get("mint"), e)
+            if not did:
+                await beating_sleep(self.d.hub, "executor", 0.5, step=0.5)

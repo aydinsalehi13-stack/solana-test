@@ -280,6 +280,9 @@ class Scanner:
             except asyncio.QueueEmpty:
                 pass
             self.d.hub.heartbeats.beat("scanner")
+            if "scanner" in self.d.hub.paused:
+                await beating_sleep(self.d.hub, "scanner", 1.0, step=1.0)
+                continue
             if time.monotonic() - last_poll >= self.d.settings["scan_poll_s"]:
                 last_poll = time.monotonic()
                 try:

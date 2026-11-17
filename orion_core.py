@@ -106,6 +106,17 @@ class Engine:
             total += pos["tokens"] * px
         return total
 
+    def _manual_exit(self, tick: dict, events: list) -> None:
+        pos = self.positions.get(tick["mint"])
+        if pos is None or pos["exiting"]:
+            return
+        pct = float(tick["pct"])
+        if pct >= 100:
+            pos["exiting"] = True
+            self._queue_sell(pos, tick["ts"], None, "manual sell", True, events)
+        else:
+            self._queue_sell(pos, tick["ts"], pos["tokens"] * pct / 100.0, f"manual sell {pct:g}%", False, events)
+
     def _next_id(self) -> int:
         self._id += 1
         return self._id
@@ -132,6 +143,8 @@ class Engine:
             self._m(mint, ts).safety = tick
         elif kind == "dev":
             self._m(mint, ts).dev_sold = bool(tick["dev_sold"])
+        elif kind == "manual":  # the owner pressed 'Sell now' (recorded like any other input, so replays match)
+            self._manual_exit(tick, events)
         m = self.mints.get(mint) if mint else None
         price_tick = kind in ("trade", "snap") and m is not None and m.price_usd is not None and m.price_ts == ts
         self._process_pending(ts, mint if price_tick else None, events)

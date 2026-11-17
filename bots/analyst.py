@@ -355,7 +355,10 @@ class Analyst:
         return out
 
     async def run(self) -> None:
+        from bus import wait_if_paused
+
         while True:
+            await wait_if_paused(self.d.hub, "analyst")
             try:
                 coin = await asyncio.wait_for(self.q.get(), timeout=20)
             except asyncio.TimeoutError:

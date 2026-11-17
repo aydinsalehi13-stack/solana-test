@@ -36,6 +36,7 @@ class Orion:
         self.q_new = subscribe_queue(deps.hub, "new_token")
         self.q_trade = subscribe_queue(deps.hub, "trade")
         self.q_snap = subscribe_queue(deps.hub, "snapshot")
+        self.q_manual = subscribe_queue(deps.hub, "manual_sell")
         self.names: dict[str, dict] = {}
         self.rows: dict[str, int] = {}  # mint -> strat_positions id
         self.watch: dict[str, float] = {}
@@ -57,7 +58,10 @@ class Orion:
 
     def update_pause(self) -> None:
         badge = self.fb.badge() if self.fb is not None else "feed down"
-        self.engine.pause_reason = None if badge in FAST_BADGES else f"{badge}: too slow to trade on"
+        if "orion" in self.d.hub.paused:  # the owner paused entries; open positions are still managed
+            self.engine.pause_reason = "paused by the owner"
+        else:
+            self.engine.pause_reason = None if badge in FAST_BADGES else f"{badge}: too slow to trade on"
 
     # ---- start: restore the bank, close what a restart left open -----------------------------------------------------------------------
     async def start(self) -> None:
@@ -310,6 +314,13 @@ class Orion:
                     self.names[tick["mint"]] = {"symbol": ev.get("symbol"), "name": ev.get("name")}
                     self.watch[tick["mint"]] = tick["ts"]
                 await self.handle(tick)
+        while True:
+            try:
+                req = self.q_manual.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            if req.get("mint") in self.engine.positions:
+                await self.handle({"kind": "manual", "ts": now, "mint": req["mint"], "pct": req["pct"]})
         self.update_pause()
         if self.engine.positions or self.engine.pending:
             await self.handle({"kind": "clock", "ts": now})
