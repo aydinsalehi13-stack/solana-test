@@ -1,5 +1,5 @@
 {
-  "_note": "Exact key per field the bots need. path=null means not mapped yet; confirmed=true only after checking a real sample in logs/raw/ (python fields.py). Paths named here come from the spec's own wording and are NOT confirmed.",
+  "_note": "Exact key per field the bots need. path=null means not mapped yet; confirmed=true only after checking a real sample in logs/raw/ (python fields.py). Convention: swaps.rows and balances.positions are paths to the list in the whole response; swap.* and balances.position_* are paths inside ONE list item (used by verify.py and reconcile.py). Paths named here come from the spec's own wording and are NOT confirmed.",
   "fields": {
     "user.id":              {"source": "userHandle",    "path": null, "confirmed": false},
     "user.address":         {"source": "userHandle",    "path": null, "confirmed": false},
@@ -24,6 +24,9 @@
     "warnings.disable_selling": {"source": "tokenWarnings", "path": "disableSelling", "confirmed": false},
     "warnings.list":            {"source": "tokenWarnings", "path": "warnings", "confirmed": false},
     "leaderboard.rows":      {"source": "leaderboard",  "path": null, "confirmed": false},
-    "hodlers.top":           {"source": "hodlers",      "path": null, "confirmed": false}
+    "hodlers.top":           {"source": "hodlers",      "path": null, "confirmed": false},
+    "swaps.rows":            {"source": "swaps",        "path": null, "confirmed": false},
+    "balances.position_mint":   {"source": "balances",  "path": null, "confirmed": false},
+    "balances.position_amount": {"source": "balances",  "path": null, "confirmed": false}
   }
 }

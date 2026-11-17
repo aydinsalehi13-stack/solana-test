@@ -235,6 +235,12 @@ async def amain() -> int:
                 sup.add("orion", pd.orion.run)
             for name, fn in pd.extra:
                 sup.add(name, fn)
+    import links
+    import verify
+
+    for o in await verify.recover_orders(db):  # an order caught mid-click by a crash is never clicked again; the owner is told
+        hub.bus.publish("push", {"text": f"Unverified: {o['symbol'] or o['mint'][:6]} {o['side']}, check FOMO (the desk stopped mid-order)",
+                                 "link": links.coin_url(o["mint"]), "strategy": "prompt", "ts": time.time()})
     sup.start()
 
     host, port = config.desk_host(), config.desk_port()

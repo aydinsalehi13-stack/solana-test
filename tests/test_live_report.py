@@ -352,3 +352,29 @@ async def test_weekly_review_finds_skipped_coins_that_later_ran_2x_and_ignores_o
     assert res["skipped_ran_2x"] == 1 and res["trades_green"] == 0
     page = report.render_weekly(res, "2026-11-18")
     assert "none applied" in page and f"<footer>{links.SIGNUP_URL}</footer>" in page
+
+
+# =============================== secrets in API responses ====================================================================
+async def test_no_secret_value_appears_in_any_api_response(rdb, tmp_path, monkeypatch):
+    from api import create_app
+
+    await seeded_night(rdb, tmp_path, monkeypatch)
+    secrets = {"APP_TOKEN": "api-sweep-token-VALUE-12345", "TELEGRAM_BOT_TOKEN": TOKEN, "HELIUS_API_KEY": "helius-sweep-VALUE-654321",
+               "PUMPPORTAL_API_KEY": "pump-sweep-VALUE-111111", "JUPITER_API_KEY": "jup-sweep-VALUE-222222", "XAI_API_KEY": "xai-sweep-VALUE-333333"}
+    for k, v in secrets.items():
+        monkeypatch.setenv(k, v)
+    hub = Hub()
+    hub.heartbeats.beat("scanner")
+    app = create_app(rdb, hub, secrets["APP_TOKEN"])
+    H = {"Authorization": f"Bearer {secrets['APP_TOKEN']}"}
+    paths = ["/api/ping", "/api/state", "/api/health", "/api/live", "/api/chart", "/api/activity", "/api/orders", "/api/account", "/api/settings", "/api/mode",
+             "/api/reports", f"/api/coin/{DEMO_MINTS[0]}", f"/api/audit/{DEMO_MINTS[0]}", f"/api/intel/{DEMO_MINTS[0]}", "/api/bots/scanner/decisions", "/api/screen.jpg"]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t") as c:
+        made = (await c.post("/api/report/generate", headers=H)).json()
+        paths.append(f"/api/report/{made['date']}")
+        for p in paths:
+            r = await c.get(p, headers=H)
+            assert r.status_code in (200, 404, 423), (p, r.status_code)
+            body = r.text if "image" not in r.headers.get("content-type", "") else r.content.decode("latin-1")
+            leaked = [k for k, v in secrets.items() if v in body]
+            assert not leaked, (p, leaked)
