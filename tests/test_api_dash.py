@@ -195,7 +195,10 @@ async def test_mode_never_goes_live(env, tmp_path, monkeypatch):
     (tmp_path / "d2").mkdir()
     for f in ("acceptance.json", "live_test.json"):
         (tmp_path / "d2" / f).write_text('{"passed": true}')
-    await db.execute("UPDATE nights SET ended_at=1 WHERE id=1")
+    await db.execute("UPDATE nights SET started_at=1000, ended_at=30000 WHERE id=1")  # a night only counts when the desk really ran it:
+    await db.execute("INSERT INTO uptime_segments(start_ts, end_ts) VALUES (1000, 30000)")  # coverage,
+    await db.execute("INSERT INTO metrics_log(ts, lag_p95_ms, lag_max_ms, restarts) VALUES (2000, 30, 90, 0)")  # loop lag
+    await db.execute("INSERT INTO restart_log(ts, kind, reason) VALUES (900, 'desk_start', 'desk process started')")  # and the restart log
     assert all(g["met"] for g in (await c.get("/api/mode")).json()["gates"])
     r = await c.post("/api/mode", json={"mode": "LIVE", "confirm": "LIVE"})
     assert r.status_code == 501
