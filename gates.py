@@ -1,6 +1,6 @@
 """The gates for LIVE (CLAUDE.md section 0, rule 1). Shared by the dashboard API and Telegram.
 
-LIVE needs all of: one full PAPER night in the database, the acceptance suite passed, and a $2 LIVE test trade the owner approved
+LIVE needs all of: one full PAPER night in the database (night_check.py: coverage, loop lag, restarts logged), the acceptance suite passed, and a $2 LIVE test trade the owner approved
 (bought, verified on every check, sold 100%, verified). Even with all of them met, this build cannot go live: LIVE clicking is not
 implemented. Nothing in the code ever writes mode=LIVE.
 """
@@ -19,8 +19,9 @@ def _flag(name: str) -> bool:
 
 
 async def live_gates(db) -> list[dict]:
-    nights = await db.fetchone("SELECT COUNT(*) n FROM nights WHERE ended_at IS NOT NULL")
-    return [{"gate": "one full PAPER night in the database", "met": (nights["n"] or 0) >= 1},
+    import night_check  # a night counts only if it passed the night check (coverage, loop lag, restarts logged)
+
+    return [{"gate": "one full PAPER night in the database", "met": await night_check.full_nights(db) >= 1},
             {"gate": "the acceptance suite passed", "met": _flag("acceptance.json")},
             {"gate": "a $2 LIVE test trade approved by the owner, verified both ways", "met": _flag("live_test.json")}]
 

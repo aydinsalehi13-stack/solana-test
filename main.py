@@ -190,6 +190,13 @@ async def amain() -> int:
     await db.start()
     write_pid()
 
+    # every restart is logged for good: the night check and the report read this, a process restart cannot lose it
+    db.execute_nowait("INSERT INTO restart_log(ts, kind, bot, reason, down_s) VALUES (?,?,?,?,?)", (time.time(), "desk_start", None, "desk process started", None))
+    hub.bus.on("restart", lambda ev: db.execute_nowait("INSERT INTO restart_log(ts, kind, bot, reason, down_s) VALUES (?,?,?,?,?)",
+                                                         (ev["ts"], "component", ev["data"].get("bot"), str(ev["data"].get("reason"))[:200], ev["data"].get("down_s"))))
+    hub.bus.on("wake", lambda ev: db.execute_nowait("INSERT INTO restart_log(ts, kind, bot, reason, down_s) VALUES (?,?,?,?,?)",
+                                                      (ev["ts"], "wake", None, "laptop woke from sleep", ev["data"].get("gap_s"))))
+
     token = os.environ.get("APP_TOKEN", "")
     if not token:
         log.error("APP_TOKEN is empty: the API will refuse every request. Run setup.py or edit .env")

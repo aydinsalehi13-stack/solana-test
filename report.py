@@ -17,6 +17,7 @@ from pathlib import Path
 import api_dash
 import config
 import links
+import night_check
 import settings as st
 
 NIGHT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -95,6 +96,7 @@ async def build_night_report(db, hub=None, night_id: int | None = None, out_dir:
     jup_extra = sum((t["size_usd"] or 0) * (t["jup_extra_pct"] or 0) / 100.0 * 2 for t in trades)
     covered = await db.coverage_seconds(start, end)
     window = max(end - start, 1.0)
+    health = await night_check.evaluate(db, nid, now) if night else None
     net = sum(t["pnl_usd"] or 0.0 for t in trades)
     summary = f"{len(trades)} trades, net {money(net)}, fees {money(fees).lstrip('+')}, the desk ran {100 * covered / window:.0f}% of the night"
 
@@ -120,6 +122,16 @@ async def build_night_report(db, hub=None, night_id: int | None = None, out_dir:
             f"<td>{esc(o['usd'])}</td><td>{esc(o['quote_text'])} {esc(o['fee_text'])}</td><td>{esc(o['status'])}</td>"
             f"<td>screen {chk(o['screen_ok'])}, api {chk(o['api_ok'])}, chain {chk(o['chain_ok'])}</td><td>{esc(o['reason'])}</td></tr>" for o in orders)
 
+    def health_html(h):
+        if not h or h.get("night") is None:
+            return "<p>no data</p>"
+        lag, rs = h["lag"], h["restarts"]
+        lag_t = "no data" if lag["status"] == "no data" else f"p95 {lag['p95_ms']} ms over {lag['minutes']} minutes (limit {lag['limit_ms']:.0f} ms, {lag['status']}); worst minute {lag['worst_minute_p95_ms']} ms"
+        items = "".join(f"<li>{esc(time.strftime('%H:%M', time.localtime(r['ts'])))} {esc(r['kind'])} {esc(r['bot'] or '')} {esc(r['reason'])}</li>" for r in rs["listed"])
+        verdict = "a full PAPER night" if h["full"] else "not a full night: " + "; ".join(h["reasons"])
+        return (f"<p>Loop lag: {esc(lag_t)}.</p><p>Restarts: {rs['components']} component, {rs['wakes']} wake, {rs['desk_starts']} desk start.</p>"
+                f"{('<ul>' + items + '</ul>') if items else ''}<p><b>{esc(verdict)}</b></p>")
+
     def bars(d):
         return "<ul>" + "".join(f"<li>{esc(k)}: {v}</li>" for k, v in sorted(d.items(), key=lambda kv: -kv[1])) + "</ul>" if d else "<p>none</p>"
 
@@ -134,6 +146,7 @@ table{{border-collapse:collapse;width:100%;margin:8px 0 22px}}td,th{{border-bott
 <h2>Trades that won ({len(green)})</h2><table><tr><th>strategy</th><th>coin</th><th>in</th><th>out</th><th>size</th><th>P&amp;L</th><th>rule</th><th>fees</th></tr>{trade_rows(green)}</table>
 <h2>Orders and their checks</h2><table><tr><th>time</th><th>strategy</th><th>order</th><th>$</th><th>quote</th><th>status</th><th>checks</th><th>why</th></tr>{order_rows()}</table>
 <h2>Scanner kills by reason</h2>{bars(scanner_kills)}<h2>Analyst refusals by layer</h2>{bars(analyst_no)}
+<h2>Health</h2>{health_html(health)}
 <h2>Costs</h2><p>Fees paid: {esc(money(fees).lstrip('+'))}. Extra cost added where the real Jupiter route was worse than the fill model: about {esc(money(jup_extra).lstrip('+'))} across both legs.</p>
 <h2>Usage</h2><p>{esc(usage_text(hub))}</p>
 <h2>Frames</h2>{''.join(f'<img src="{esc(f)}" alt="desk frame">' for f in frames) or '<p>no frames were recorded</p>'}
