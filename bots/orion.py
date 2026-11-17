@@ -22,6 +22,7 @@ from recorder import TickRecorder
 
 log = logging.getLogger("desk.orion")
 STRATEGY = "orion_fast"
+LONG_SLEEP_S = 300.0  # the spec says "a long sleep" without a number: past 5 minutes frozen, held prices are stale
 FAST_BADGES = ("PumpPortal live", "DexScreener snapshots")  # anything else is too slow to trade on
 
 
@@ -47,6 +48,8 @@ class Orion:
         self._last_mark_write = 0.0
         self.ticks = 0
         self.sem = asyncio.Semaphore(3)
+        self._slept_s: float | None = None
+        deps.hub.bus.on("wake", self._on_wake)
         deps.hub.status[STRATEGY] = self.status
 
     # ---- status / pause ------------------------------------------------------------------------------------------------------
@@ -62,6 +65,20 @@ class Orion:
             self.engine.pause_reason = "paused by the owner"
         else:
             self.engine.pause_reason = None if badge in FAST_BADGES else f"{badge}: too slow to trade on"
+
+    # ---- wake: a long sleep means the prices we hold are stale -------------------------------------------------------------------------
+    def _on_wake(self, ev: dict) -> None:  # sync bus callback: only remembers; step() does the work
+        gap = (ev.get("data") or {}).get("gap_s")
+        self._slept_s = max(self._slept_s or 0.0, gap if gap is not None else LONG_SLEEP_S)  # unknown length: treat as long
+
+    async def _close_after_sleep(self, now: float) -> None:
+        slept, self._slept_s = self._slept_s, None
+        if slept is None or slept < LONG_SLEEP_S or not (self.engine.positions or self.engine.pending):
+            return
+        events = self.engine.close_all_at_last_price(now, "desk restart · marked at last real price")
+        log.info("woke after %.0fs asleep: closed %d orion position(s) at the last real price", slept, sum(e["type"] == "trade_closed" for e in events))
+        if events:
+            await self._persist(events)
 
     # ---- start: restore the bank, close what a restart left open -----------------------------------------------------------------------
     async def start(self) -> None:
@@ -301,6 +318,7 @@ class Orion:
         """Drain what has arrived and do the periodic work. Separate from run() so tests can drive it."""
         d = self.d
         now = d.clock() if now is None else now
+        await self._close_after_sleep(now)
         for q, conv in ((self.q_new, self.tick_from_new_token), (self.q_trade, self.tick_from_trade), (self.q_snap, self.tick_from_snapshot)):
             while True:
                 try:

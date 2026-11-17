@@ -36,14 +36,35 @@ class PromptDesk:
         self.extra: list = []  # (name, coroutine function) supervised alongside the bots (Telegram, reports)
         self.stop_hooks: list = []  # called on shutdown (the screenshot thread)
 
+    async def reprove_session(self) -> dict:
+        """After a wake: load FOMO fresh and read the header again (S0). Never clicks, never logs in for the owner."""
+        b = self.d.browser
+        res = {"ts": self.d.clock(), "ok": False, "error": "no browser attached"}
+        if b is not None:
+            try:
+                async with b.lane.hold("wake"):
+                    await b.ensure_ready(fresh=True)
+                res = {"ts": self.d.clock(), "ok": True, "error": None}
+            except Exception as e:  # noqa: BLE001
+                res = {"ts": self.d.clock(), "ok": False, "error": f"{type(e).__name__}: {e}"[:200]}
+        self.d.hub.status["session_proof"] = lambda r=res: r
+        log.info("FOMO session re-proved after wake: %s", "ok" if res["ok"] else res["error"])
+        return res
+
     async def browser_link(self) -> None:
         """Keep trying to attach to the desk Chrome. Without it there is no quote, so no paper fill (honest skip)."""
         from bus import beating_sleep
         from browser import Browser
 
         b = None
+        woke = asyncio.Event()
+        self.d.hub.bus.on("wake", lambda ev: woke.set())
         while True:
             self.d.hub.heartbeats.beat("browser_link")
+            if woke.is_set():
+                woke.clear()
+                if b is not None:
+                    await self.reprove_session()
             if b is None or b.browser is None or not b.browser.is_connected():
                 try:
                     b = Browser()

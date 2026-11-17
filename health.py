@@ -58,6 +58,35 @@ def ping() -> bool:
         return False
 
 
+def owner_chat_id() -> int | None:
+    if not config.DB_PATH.exists():
+        return None
+    try:
+        con = sqlite3.connect(f"{config.DB_PATH.resolve().as_uri()}?mode=ro", uri=True, timeout=3)
+        try:
+            row = con.execute("SELECT value FROM settings WHERE key='telegram_owner_chat_id'").fetchone()
+        finally:
+            con.close()
+        return int(row[0]) if row else None
+    except (sqlite3.Error, ValueError):
+        return None
+
+
+def notify_restart(status: str, pid, urlopen=urllib.request.urlopen) -> bool:
+    """One Telegram line to the owner (only if a bot token and an owner chat exist). The token never reaches a log line."""
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN", ""), owner_chat_id()
+    if not token or chat is None:
+        return False
+    text = f"PAPER \u00b7 the health check found the desk {status} (pid {pid}) and restarted it. Open the dashboard to see what it was doing."
+    body = json.dumps({"chat_id": chat, "text": text}).encode()
+    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urlopen(req, timeout=10) as r:  # noqa: S310
+            return bool(json.load(r).get("ok"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def log_line(msg: str) -> None:
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     with open(config.LOG_DIR / "health.log", "a", encoding="utf-8") as f:
@@ -72,8 +101,8 @@ def snapshot() -> tuple[str, int | None, float | None]:
     return evaluate(pid is not None, age), pid, age
 
 
-def run_once(wait: float = RECHECK_WAIT_S, restart=None, chrome=None) -> str:
-    """Returns the log line it wrote. `restart` / `chrome` are injectable for tests."""
+def run_once(wait: float = RECHECK_WAIT_S, restart=None, chrome=None, notify=None) -> str:
+    """Returns the log line it wrote. `restart` / `chrome` / `notify` are injectable for tests."""
     import chrome_launcher
     import run_desk
 
@@ -86,6 +115,9 @@ def run_once(wait: float = RECHECK_WAIT_S, restart=None, chrome=None) -> str:
             status, action = "ok", "ping-ok"  # slow heartbeat but the API answers: leave it alone
         elif status != "ok":
             action = "restart"
+            told = (notify or notify_restart)(status, pid)
+            if told:
+                action = "restart+telegram"
             if restart is not None:
                 restart()
             else:

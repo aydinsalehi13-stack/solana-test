@@ -70,11 +70,12 @@ class Supervisor:
                 self._note(name, f"crashed: {type(e).__name__}: {e}")
                 await asyncio.sleep(1.0)
 
-    def on_wake(self) -> None:
-        """Laptop slept or froze: give every bot a fresh window instead of a false alarm."""
+    def on_wake(self, gap_s: float | None = None) -> None:
+        """Laptop slept or froze: give every bot a fresh window instead of a false alarm.
+        gap_s is how long the loop was frozen (None = unknown); subscribers decide what a long sleep means for them."""
         self.hub.heartbeats.touch_all()
-        self.hub.bus.publish("wake", {})
-        log.info("wake from sleep detected: heartbeats reset")
+        self.hub.bus.publish("wake", {"gap_s": gap_s})
+        log.info("wake from sleep detected (frozen %s): heartbeats reset", "?" if gap_s is None else f"{gap_s:.0f}s")
 
     def check_stale(self) -> list[str]:
         stale = self.hub.heartbeats.stale(self.stale_s, exclude=("watchdog",))
@@ -93,7 +94,7 @@ class Supervisor:
             await asyncio.sleep(self.tick_s)
             self.hub.heartbeats.beat("watchdog")
             if time.time() - t0 > 2 * self.tick_s:
-                self.on_wake()
+                self.on_wake(time.time() - t0 - self.tick_s)
                 continue
             self.check_stale()
 
@@ -193,6 +194,14 @@ async def amain() -> int:
     if not token:
         log.error("APP_TOKEN is empty: the API will refuse every request. Run setup.py or edit .env")
 
+    awake = None
+    if os.environ.get("DESK_KEEP_AWAKE") != "0":  # DESK_KEEP_AWAKE=0: tests and dev boxes
+        from keepawake import KeepAwake
+
+        awake = KeepAwake()
+        hub.status["keep_awake"] = lambda a=awake: {"method": a.method}
+        awake.start()
+
     sup = Supervisor(hub)
     sup.add("loop", lambda: lag_monitor(hub))
     sup.add("heartbeat_writer", lambda: heartbeat_writer(hub, db, supervisor=sup))
@@ -238,6 +247,8 @@ async def amain() -> int:
         log.error("API server could not start on %s:%s", host, port)
     finally:
         await sup.stop()
+        if awake is not None:
+            awake.stop()
         for hook in (pd.stop_hooks if pd is not None else []):
             with contextlib.suppress(Exception):
                 res = hook()

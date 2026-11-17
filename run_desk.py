@@ -4,6 +4,9 @@
   python run_desk.py --restart   stop the running desk, then start
   python run_desk.py --stop      stop it
   python run_desk.py --no-chrome do not touch Chrome (also DESK_NO_CHROME=1)
+  python run_desk.py --watch     start if needed, then stay alive while the desk lives; exit 1 when it is gone.
+                                 The OS service (launchd KeepAlive, systemd Restart=always, Task Scheduler restart) runs this,
+                                 so "the desk died" becomes "the service exited" and the OS starts it again.
 """
 from __future__ import annotations
 
@@ -72,6 +75,18 @@ def start(use_chrome: bool = True) -> int:
     return 1
 
 
+def watch(use_chrome: bool = True, poll: float = 5.0, alive=None, sleep=time.sleep, start_fn=None) -> int:
+    """Block while the desk process is alive. Returns the start result if it failed, else 1 once the desk is gone (that is what makes the OS restart us)."""
+    rc = (start_fn or start)(use_chrome)
+    if rc:
+        return rc
+    alive = alive or running_pid
+    while alive():
+        sleep(poll)
+    osutil.say("the desk is no longer running")
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     config.load_env()
@@ -80,7 +95,10 @@ def main(argv: list[str] | None = None) -> int:
     if "--restart" in argv and not stop():
         osutil.say("could not stop the running desk")
         return 1
-    return start(use_chrome="--no-chrome" not in argv and os.environ.get("DESK_NO_CHROME") != "1")
+    use_chrome = "--no-chrome" not in argv and os.environ.get("DESK_NO_CHROME") != "1"
+    if "--watch" in argv:
+        return watch(use_chrome)
+    return start(use_chrome=use_chrome)
 
 
 if __name__ == "__main__":
