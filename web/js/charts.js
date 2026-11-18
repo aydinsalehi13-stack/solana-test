@@ -1,14 +1,17 @@
-/* Hand-drawn charts on <canvas>/SVG: equity (two lines), candles, sparkline, ring. Thin marks, recessive grid, one axis. */
+/* Hand-drawn charts on <canvas>/SVG: the value line, candles, sparkline, ring. Thin marks, no chart junk, one axis. */
 (function () {
   'use strict';
   const D = window.D;
 
   const colorOf = (name) => D.css(name === 'prompt' ? '--prompt' : '--orion');
-  const LABEL = { prompt: 'prompt', orion_fast: 'orion_fast' };
+  const ease = (k) => 1 - Math.pow(1 - Math.min(1, Math.max(0, k)), 3);
 
-  /* ---------------------------------- equity chart ---------------------------------- */
+  /* ---------------------------------- value chart ----------------------------------
+     One axis: dollars above or below what was put in. The bold line is the whole desk (both strategies added up), the dashed
+     line is the money put in, and each strategy is a thin line of its own. The head dot is where the desk is right now. */
   const EQ = (D.equity = {
-    canvas: null, fx: null, stage: null, tip: null, data: { series: [], markers: [], now: 0 }, hover: null, layout: null, dirty: true,
+    canvas: null, fx: null, stage: null, tip: null, data: { series: [], markers: [], now: 0, window: null }, model: null, hover: null, layout: null, dirty: true,
+    reveal: null, head: null, lastKey: '',
 
     init() {
       this.canvas = D.$('#equity'); this.fx = D.$('#equity-fx'); this.stage = D.$('#chart-stage'); this.tip = D.$('#chart-tip');
@@ -21,134 +24,158 @@
       D.ticker((t) => this.tick(t));
     },
 
-    set(payload) { this.data = payload; this.dirty = true; D.$('#chart-empty').hidden = payload.series.some((s) => s.points.length > 1); },
+    set(payload) {
+      this.data = payload;
+      this.model = this.build(payload);
+      const has = !!this.model;
+      D.$('#chart-empty').hidden = has;
+      const key = payload.range + '|' + has;
+      if (has && key !== this.lastKey && !D.reduced()) this.reveal = { t0: performance.now(), ms: 950 };   // a new view draws itself in, left to right
+      this.lastKey = key;
+      const m = this.model;
+      D.$('#chart-t0').textContent = m ? D.hm(m.t0) : '';
+      D.$('#chart-t1').textContent = m ? D.hm(m.t1) : '';
+      this.dirty = true;
+    },
+
+    /* Turn the two balance series into dollars above/below start, plus their sum on a shared clock. */
+    build(p) {
+      const live = p.series.filter((s) => s.points.length > 0);
+      if (!live.some((s) => s.points.length > 1)) return null;
+      const times = Array.from(new Set(live.flatMap((s) => s.points.map((q) => q[0])))).sort((a, b) => a - b);
+      const idx = live.map(() => 0);
+      const total = times.map((t) => {
+        let sum = 0;
+        live.forEach((s, k) => {
+          while (idx[k] + 1 < s.points.length && s.points[idx[k] + 1][0] <= t) idx[k]++;
+          sum += s.points[idx[k]][1] - s.start_cash;   // before a strategy's first reading its first reading stands in
+        });
+        return [t, sum];
+      });
+      const lines = live.map((s) => ({ name: s.name, start: s.start_cash, points: s.points.map(([t, v]) => [t, v - s.start_cash]) }));
+      const putIn = live.reduce((a, s) => a + s.start_cash, 0);
+      let lo = 0, hi = 0;
+      for (const [, v] of total) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      for (const l of lines) for (const [, v] of l.points) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      if (hi - lo < 1) { lo -= 0.5; hi += 0.5; }
+      const pad = (hi - lo) * 0.16;
+      const w = p.window;
+      const t0 = w ? Math.min(w[0], times[0]) : times[0];
+      let t1 = w ? w[1] : times[times.length - 1];
+      if (t1 <= t0) t1 = t0 + 60;
+      return { total, lines, putIn, lo: lo - pad, hi: hi + pad, t0, t1 };
+    },
 
     tick(t) {
       if (!this.canvas || !this.stage.offsetParent) return;
+      if (this.reveal) this.dirty = true;
       if (this.dirty) { this.drawMain(); this.dirty = false; }
       this.drawFx(t);
     },
 
-    bounds() {
-      const all = this.data.series.flatMap((s) => s.points);
-      if (all.length < 2) return null;
-      let t0 = Infinity, t1 = -Infinity, lo = Infinity, hi = -Infinity;
-      for (const [t, v] of all) { t0 = Math.min(t0, t); t1 = Math.max(t1, t); lo = Math.min(lo, v); hi = Math.max(hi, v); }
-      for (const s of this.data.series) if (s.points.length) { lo = Math.min(lo, s.start_cash); hi = Math.max(hi, s.start_cash); }
-      if (hi - lo < 1) { const m = (hi + lo) / 2; lo = m - 0.5; hi = m + 0.5; }
-      const pad = (hi - lo) * 0.12;
-      return { t0, t1: t1 === t0 ? t0 + 60 : t1, lo: lo - pad, hi: hi + pad };
+    progress() {
+      if (!this.reveal) return 1;
+      const k = (performance.now() - this.reveal.t0) / this.reveal.ms;
+      if (k >= 1) { this.reveal = null; return 1; }
+      return ease(k);
     },
 
     drawMain() {
       const { ctx, w, h } = D.fit(this.canvas);
       ctx.clearRect(0, 0, w, h);
-      const b = this.bounds();
-      if (!b) { this.layout = null; return; }
-      const mobile = w < 480;
-      const m = { l: mobile ? 44 : 52, r: mobile ? 12 : 84, t: 10, b: 22 };
-      const X = (t) => m.l + ((t - b.t0) / (b.t1 - b.t0)) * (w - m.l - m.r);
-      const Y = (v) => m.t + (1 - (v - b.lo) / (b.hi - b.lo)) * (h - m.t - m.b);
-      this.layout = { m, X, Y, b, w, h };
-      const grid = D.css('--grid'), label = D.css('--muted'), surface = D.css('--glass');
-      ctx.font = '11px ' + D.css('--font-ui');
-      ctx.textBaseline = 'middle';
-      // recessive grid + y labels
-      ctx.lineWidth = 1;
-      for (let i = 0; i <= 3; i++) {
-        const v = b.lo + ((b.hi - b.lo) * i) / 3, y = Math.round(Y(v)) + 0.5;
-        ctx.strokeStyle = grid; ctx.beginPath(); ctx.moveTo(m.l, y); ctx.lineTo(w - m.r, y); ctx.stroke();
-        ctx.fillStyle = label; ctx.textAlign = 'right'; ctx.fillText('$' + v.toFixed(v > 1000 ? 0 : 1), m.l - 8, y);
+      const m = this.model;
+      if (!m) { this.layout = null; return; }
+      const pad = { t: 14, b: 6 };
+      const X = (t) => ((t - m.t0) / (m.t1 - m.t0)) * w;
+      const Y = (v) => pad.t + (1 - (v - m.lo) / (m.hi - m.lo)) * (h - pad.t - pad.b);
+      this.layout = { X, Y, w, h, pad };
+      const prog = this.progress();
+      const last = m.total[m.total.length - 1];
+      const up = last[1] >= -0.005;
+      const main = D.css(up ? '--green-hi' : '--red-hi');
+      // what was put in: one dashed line across the whole session
+      const y0 = Math.round(Y(0)) + 0.5;
+      ctx.setLineDash([3, 5]); ctx.strokeStyle = D.css('--hair-strong'); ctx.lineWidth = 1.2; ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(w, y0); ctx.stroke(); ctx.setLineDash([]);
+      const xEnd = X(last[0]);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(0, 0, Math.max(1, xEnd * prog + 1), h); ctx.clip();
+      // each strategy: a thin line of its own (wide charts only: a phone shows the one desk line, like the reference)
+      for (const l of m.lines) {
+        if (l.points.length < 2 || w < 560) continue;
+        ctx.beginPath(); l.points.forEach(([t, v], i) => (i ? ctx.lineTo(X(t), Y(v)) : ctx.moveTo(X(t), Y(v))));
+        ctx.lineJoin = 'round'; ctx.lineWidth = 1.3; ctx.globalAlpha = 0.75; ctx.strokeStyle = colorOf(l.name); ctx.stroke(); ctx.globalAlpha = 1;
       }
-      // x labels
-      ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-      const ticks = mobile ? 3 : 5;
-      for (let i = 0; i < ticks; i++) {
-        const t = b.t0 + ((b.t1 - b.t0) * i) / (ticks - 1);
-        ctx.fillStyle = label; ctx.fillText(D.hm(t), Math.min(w - m.r - 14, Math.max(m.l + 14, X(t))), h - 5);
-      }
-      // start-cash reference (dashed), once per distinct value
-      const seen = new Set();
-      for (const s of this.data.series) {
-        if (!s.points.length || seen.has(s.start_cash)) continue;
-        seen.add(s.start_cash);
-        const y = Math.round(Y(s.start_cash)) + 0.5;
-        ctx.setLineDash([4, 5]); ctx.strokeStyle = D.css('--hair-strong'); ctx.beginPath(); ctx.moveTo(m.l, y); ctx.lineTo(w - m.r, y); ctx.stroke(); ctx.setLineDash([]);
-      }
-      // series: area, glow line
-      for (const s of this.data.series) {
-        if (s.points.length < 2) continue;
-        const c = colorOf(s.name);
-        const g = ctx.createLinearGradient(0, m.t, 0, h - m.b);
-        g.addColorStop(0, c + '30'); g.addColorStop(1, c + '00');
-        ctx.beginPath();
-        s.points.forEach(([t, v], i) => (i ? ctx.lineTo(X(t), Y(v)) : ctx.moveTo(X(t), Y(v))));
-        const lastP = s.points[s.points.length - 1];
-        ctx.lineTo(X(lastP[0]), h - m.b); ctx.lineTo(X(s.points[0][0]), h - m.b); ctx.closePath(); ctx.fillStyle = g; ctx.fill();
-        ctx.beginPath();
-        s.points.forEach(([t, v], i) => (i ? ctx.lineTo(X(t), Y(v)) : ctx.moveTo(X(t), Y(v))));
-        ctx.lineJoin = 'round'; ctx.lineWidth = 2; ctx.strokeStyle = c; ctx.shadowColor = c; ctx.shadowBlur = D.reduced() ? 0 : 9; ctx.stroke(); ctx.shadowBlur = 0;
-        if (!mobile) {  // direct label at the line end (text in the label ink, a colored mark carries identity)
-          ctx.fillStyle = c; ctx.beginPath(); ctx.arc(w - m.r + 12, Y(lastP[1]), 3.5, 0, 6.3); ctx.fill();
-          ctx.fillStyle = D.css('--label'); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(LABEL[s.name] || s.name, w - m.r + 20, Y(lastP[1]));
-        }
-      }
-      // trade markers: a ring on the line, and a +$/-$ pill on the most recent few
-      const mk = this.data.markers.filter((x) => x.ts >= b.t0 && x.ts <= b.t1);
-      const pills = [];   // x of the pills already drawn: a pill that would sit on another one is skipped
-      mk.forEach((mark, idx) => {
-        const s = this.data.series.find((q) => q.name === mark.strategy);
-        if (!s || !s.points.length) return;
-        const p = nearest(s.points, mark.ts);
-        const x = X(mark.ts), y = Y(p[1]);
-        ctx.fillStyle = surface; ctx.strokeStyle = mark.pnl >= 0 ? D.css('--green-hi') : D.css('--red-hi'); ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(x, y, 3.6, 0, 6.3); ctx.fill(); ctx.stroke();
-        if (idx >= mk.length - (mobile ? 3 : 5)) {
-          const txt = D.usd(mark.pnl, { sign: true, d: 2 }); const tw = ctx.measureText(txt).width + 12;
-          const px = Math.min(w - m.r - tw / 2, Math.max(m.l + tw / 2, x)), py = y - 17 < m.t + 8 ? y + 17 : y - 17;
-          if (pills.some((q) => Math.abs(q - px) < tw + 4)) return;
-          pills.push(px);
-          ctx.fillStyle = surface; ctx.strokeStyle = D.css('--hair-strong'); ctx.lineWidth = 1;
-          roundRect(ctx, px - tw / 2, py - 9, tw, 18, 9); ctx.fill(); ctx.stroke();
-          ctx.fillStyle = mark.pnl >= 0 ? D.css('--green-hi') : D.css('--red-hi'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, px, py + 0.5);
-        }
+      // the desk: soft fill down to the bottom edge, then the line
+      const g = ctx.createLinearGradient(0, pad.t, 0, h);
+      g.addColorStop(0, main + '38'); g.addColorStop(1, main + '05');
+      ctx.beginPath(); m.total.forEach(([t, v], i) => (i ? ctx.lineTo(X(t), Y(v)) : ctx.moveTo(X(t), Y(v))));
+      ctx.lineTo(xEnd, h); ctx.lineTo(X(m.total[0][0]), h); ctx.closePath(); ctx.fillStyle = g; ctx.fill();
+      ctx.beginPath(); m.total.forEach(([t, v], i) => (i ? ctx.lineTo(X(t), Y(v)) : ctx.moveTo(X(t), Y(v))));
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.lineWidth = 2.6; ctx.strokeStyle = main; ctx.stroke();
+      // closed trades: a ring on the line, and a +$/-$ pill on the newest few
+      const mk = this.data.markers.filter((x) => x.ts >= m.t0 && x.ts <= m.t1);
+      const pills = [], surface = D.css('--glass'), small = w < 480;
+      ctx.font = '600 11px ' + D.css('--font-mono');
+      mk.forEach((mark, i) => {
+        const p = nearest(m.total, mark.ts), x = X(mark.ts), y = Y(p[1]), col = D.css(mark.pnl >= 0 ? '--green-hi' : '--red-hi');
+        ctx.fillStyle = surface; ctx.strokeStyle = col; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.arc(x, y, 3.2, 0, 6.3); ctx.fill(); ctx.stroke();
+        if (i < mk.length - (small ? 1 : 4) || Math.abs(x - xEnd) < 34) return;   // never under the head dot
+        const txt = D.usd(mark.pnl, { sign: true }), tw = ctx.measureText(txt).width + 14;
+        const px = Math.min(w - tw / 2 - 4, Math.max(tw / 2 + 4, x)), py = y - 18 < pad.t ? y + 18 : y - 18;
+        if (pills.some((q) => Math.abs(q - px) < tw + 4)) return;
+        pills.push(px);
+        ctx.fillStyle = surface; ctx.strokeStyle = D.css('--hair-strong'); ctx.lineWidth = 1; roundRect(ctx, px - tw / 2, py - 9.5, tw, 19, 9.5); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = col; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, px, py + 0.5);
       });
+      ctx.restore();
     },
 
     drawFx(t) {
       const { ctx, w, h } = D.fit(this.fx);
       ctx.clearRect(0, 0, w, h);
-      const L = this.layout;
-      if (!L) return;
-      // live dot at the end of each line (a slow ring: the line is live while the desk is)
-      const phase = D.reduced() ? 0.4 : (t % 2200) / 2200;
-      for (const s of this.data.series) {
-        if (!s.points.length) continue;
-        const [pt, pv] = s.points[s.points.length - 1], c = colorOf(s.name), x = L.X(pt), y = L.Y(pv);
-        ctx.fillStyle = c; ctx.beginPath(); ctx.arc(x, y, 4, 0, 6.3); ctx.fill();
-        ctx.strokeStyle = c; ctx.globalAlpha = 1 - phase; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, 4 + phase * 9, 0, 6.3); ctx.stroke(); ctx.globalAlpha = 1;
+      const L = this.layout, m = this.model;
+      if (!L || !m) return;
+      // the head: where the desk is now. It rides the line while the chart draws in, then glides to each new reading.
+      const last = m.total[m.total.length - 1];
+      const prog = this.progress();
+      let target;
+      if (prog < 1) { const tt = m.total[0][0] + (last[0] - m.total[0][0]) * prog; target = { x: L.X(tt), y: L.Y(valueAt(m.total, tt)) }; this.head = target; }
+      else {
+        target = { x: L.X(last[0]), y: L.Y(last[1]) };
+        if (!this.head || D.reduced()) this.head = target;
+        else { this.head = { x: this.head.x + (target.x - this.head.x) * 0.2, y: this.head.y + (target.y - this.head.y) * 0.2 }; }
       }
+      const hx = Math.min(w - 8, Math.max(8, this.head.x)), hy = this.head.y;
+      const col = D.css(last[1] >= -0.005 ? '--green-hi' : '--red-hi');
+      const phase = D.reduced() ? 0.35 : (t % 2000) / 2000;
+      ctx.strokeStyle = col; ctx.globalAlpha = (1 - phase) * 0.7; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(hx, hy, 6 + phase * 12, 0, 6.3); ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.fillStyle = D.css('--glass'); ctx.strokeStyle = D.css('--ink'); ctx.lineWidth = 2.6; ctx.beginPath(); ctx.arc(hx, hy, 5.6, 0, 6.3); ctx.fill(); ctx.stroke();
       // crosshair + tooltip on hover / touch
       if (this.hover) {
-        const { m } = L, hx = Math.min(w - m.r, Math.max(m.l, this.hover.x)), tt = L.b.t0 + ((hx - m.l) / (w - m.l - m.r)) * (L.b.t1 - L.b.t0);
-        ctx.strokeStyle = D.css('--hair-strong'); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(Math.round(hx) + 0.5, m.t); ctx.lineTo(Math.round(hx) + 0.5, h - m.b); ctx.stroke();
-        const rows = [];
-        for (const s of this.data.series) {
-          if (!s.points.length) continue;
-          const p = nearest(s.points, tt);
-          ctx.fillStyle = colorOf(s.name); ctx.strokeStyle = D.css('--glass'); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(L.X(p[0]), L.Y(p[1]), 4.5, 0, 6.3); ctx.fill(); ctx.stroke();
-          rows.push([s.name, p[1], s.start_cash]);
-        }
+        const cx = Math.min(w, Math.max(0, this.hover.x)), tt = Math.min(last[0], Math.max(m.total[0][0], m.t0 + (cx / w) * (m.t1 - m.t0)));
+        const x = L.X(tt);
+        ctx.strokeStyle = D.css('--hair-strong'); ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(Math.round(x) + 0.5, 0); ctx.lineTo(Math.round(x) + 0.5, h); ctx.stroke();
+        const tv = valueAt(m.total, tt);
+        ctx.fillStyle = col; ctx.strokeStyle = D.css('--glass'); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, L.Y(tv), 4.5, 0, 6.3); ctx.fill(); ctx.stroke();
         const tip = this.tip;
-        tip.replaceChildren(D.h('small', { text: new Date(tt * 1000).toLocaleString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', month: 'short', day: 'numeric' }) }),
-          ...rows.map(([n, v, st]) => D.h('div', null, D.h('i', { class: 'swatch swatch--' + (n === 'prompt' ? 'prompt' : 'orion'), style: 'display:inline-block;margin-right:7px' }),
-            n + '  ', D.h('b', { text: D.usd(v) }), '  ', D.h('span', { class: D.dir(v - st), text: D.pct(100 * (v - st) / st, { sign: true }) }))));
+        tip.replaceChildren(D.h('small', { text: new Date(tt * 1000).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }) }),
+          D.h('div', null, D.h('i', { style: 'background:' + col }), 'value  ', D.h('b', { text: D.usd(m.putIn + tv) }), '  ', D.h('span', { class: D.dir(tv), text: D.usd(tv, { sign: true }) })),
+          ...m.lines.map((l) => { const v = valueAt(l.points, tt); return D.h('div', null, D.h('i', { style: 'background:' + colorOf(l.name) }), l.name + '  ', D.h('b', { text: D.usd(l.start + v) }), '  ', D.h('span', { class: D.dir(v), text: D.usd(v, { sign: true }) })); }));
         tip.hidden = false;
         const tw = tip.offsetWidth;
-        tip.style.left = Math.min(w - tw - 4, Math.max(4, hx + 14)) + 'px'; tip.style.top = '6px';
+        tip.style.left = Math.min(w - tw - 6, Math.max(6, x + 14)) + 'px'; tip.style.top = '4px';
       }
     },
   });
+
+  /* the last reading at or before t (a balance holds until the next one) */
+  function valueAt(points, t) {
+    let lo = 0, hi = points.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (points[mid][0] <= t) lo = mid; else hi = mid - 1; }
+    const a = points[lo], b = points[Math.min(points.length - 1, lo + 1)];
+    if (b[0] === a[0] || t <= a[0]) return a[1];
+    return a[1] + (b[1] - a[1]) * Math.min(1, (t - a[0]) / (b[0] - a[0]));   // drawn as a straight segment, so read it the same way
+  }
 
   function nearest(points, t) {
     let lo = 0, hi = points.length - 1;

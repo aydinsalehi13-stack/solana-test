@@ -1,7 +1,7 @@
 /* core: formatting, DOM helpers, the API client, the live event stream, theme, and one shared 30 fps ticker. */
 (function () {
   'use strict';
-  const D = (window.D = { state: { live: null, range: '1d', online: true, fails: 0, lastUp: null }, handlers: {} });
+  const D = (window.D = { state: { live: null, range: 'night', online: true, fails: 0, lastUp: null }, handlers: {} });
 
   D.on = (name, fn) => ((D.handlers[name] = D.handlers[name] || []).push(fn), fn);
   D.emit = (name, ...args) => (D.handlers[name] || []).forEach((fn) => {
@@ -36,6 +36,7 @@
   };
   D.pad = (n) => String(n).padStart(2, '0');
   D.clock = (ts) => { const d = new Date(ts * 1000); return D.pad(d.getHours()) + ':' + D.pad(d.getMinutes()) + ':' + D.pad(d.getSeconds()); };
+  D.durHM = (s) => { s = Math.max(0, s); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h + 'h ' + m + 'm'; };
   D.hm = (ts) => { const d = new Date(ts * 1000); return D.pad(d.getHours()) + ':' + D.pad(d.getMinutes()); };
   D.ago = (ts) => {
     const s = Math.max(0, Date.now() / 1000 - ts);
@@ -69,6 +70,11 @@
   D.css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   D.reduced = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   D.hash = (str) => { let h = 2166136261; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return (h >>> 0) / 4294967296; };
+
+  /* a coin's avatar: we store no coin images, so each coin gets a stable color of its own and its first letter */
+  D.avatar = (mint, symbol, cls) => D.h('span', { class: 'av' + (cls ? ' ' + cls : ''), style: '--h:' + Math.round(D.hash(String(mint || symbol || '?')) * 360), 'aria-hidden': 'true', text: String(symbol || mint || '?').replace(/^\$/, '').slice(0, 1) });
+  D.sym = (symbol, mint) => '$' + (symbol || (mint || '').slice(0, 6) || '?');
+  D.use = (id, cls) => { const s = D.svg('svg', { class: cls || null, viewBox: id === 'i-bot' ? '0 0 32 32' : '0 0 100 100', 'aria-hidden': 'true' }); s.append(D.svg('use', { href: '#' + id })); return s; };
 
   D.AGENTS = {
     scanner: { label: 'Scanner', c: '--scanner' }, analyst: { label: 'Analyst', c: '--analyst' }, brain: { label: 'Brain', c: '--brain' },
@@ -141,8 +147,8 @@
 
   /* ---------- theme ---------- */
   D.theme = {
-    get: () => { try { return localStorage.getItem('desk_theme') || 'dark'; } catch (e) { return 'dark'; } },
-    set: (t) => { document.documentElement.dataset.theme = t; try { localStorage.setItem('desk_theme', t); } catch (e) { /* ignore */ } const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = t === 'light' ? '#f1f1f4' : '#000000'; D.emit('theme'); },
+    get: () => { try { return localStorage.getItem('desk_theme') === 'dark' ? 'dark' : 'light'; } catch (e) { return 'light'; } },
+    set: (t) => { document.documentElement.dataset.theme = t; try { localStorage.setItem('desk_theme', t); } catch (e) { /* ignore */ } const m = document.querySelector('meta[name=theme-color]'); if (m) m.content = t === 'light' ? '#f3f4f6' : '#000000'; D.emit('theme'); },
     toggle: () => D.theme.set(D.theme.get() === 'light' ? 'dark' : 'light'),
   };
 

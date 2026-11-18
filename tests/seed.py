@@ -63,6 +63,10 @@ async def seed_demo(db, now=None, seed=11):
                      (m, "Bork Coin", "BORK", "PoolDemo", now - 4000, now - 2400, 12.0, "DevDemo"))
     await db.executemany("INSERT INTO prices(mint, ts, price, volume_m5, holders) VALUES (?,?,?,?,?)",
                          [(m, now - (120 - i) * 30, 0.5 + 0.1 * math.sin(i / 9) + i * 0.001, 1000, 400 + i) for i in range(120)])
+    # the coin tape: one recent scan per demo coin with the 1 h change the scanner read
+    h1 = [7.71, -0.41, 0.39, 15.99, -14.49, 1.42, -2.08, 4.2, -0.29, 22.6, None, 3.3]
+    await db.executemany("INSERT INTO scans(mint, ts, price, liquidity_usd, h1_change_pct, verdict, reason) VALUES (?,?,?,?,?,?,?)",
+                         [(DEMO_MINTS[i], now - 40 * i - 5, 0.01, 42000.0, h1[i], "pass" if i % 3 == 0 else "kill", "demo") for i in range(12)])
     await db.execute("INSERT INTO activity(ts, kind, bot, mint, text) VALUES (?,?,?,?,?)", (now - 100, "buy", "executor", m, "Bought BORK · $18.00"))
     await db.execute("INSERT INTO orders(ts, mint, symbol, side, usd, bot, reason, status, quote_text, fee_text, fill_usd, strategy) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                      (now - 900, m, "BORK", "buy", 18.0, "executor", "dip", "done", "36 BORK (-0.6%)", "$0.36 fee", 18.0, "prompt"))

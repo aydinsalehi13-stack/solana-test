@@ -83,7 +83,9 @@ def create_app(db: Database, hub: Hub, token: str, supervisor=None, bad_token_de
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         resp = await call_next(request)
-        resp.headers["Cache-Control"] = "no-store"
+        # API answers are never stored. The page's own files (no data, no secrets) may be kept but are re-checked every time,
+        # so a reopen costs a few tiny "not modified" answers instead of downloading everything again.
+        resp.headers["Cache-Control"] = "no-store" if request.url.path.startswith("/api") else "no-cache"
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Referrer-Policy"] = "no-referrer"
         return resp

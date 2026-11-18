@@ -24,7 +24,22 @@ AGENTS = ["scanner", "analyst", "brain", "executor", "risk", "orion"]
 MINT_RE = re.compile(r"^[A-Za-z0-9]{6,64}$")
 POSITIVE = ("pass", "buy", "size")
 NEGATIVE = ("kill", "reject", "skip", "drop")
-RANGES = {"live": 900, "1h": 3600, "4h": 4 * 3600, "1d": 86400, "1w": 7 * 86400, "all": 0}
+RANGES = {"night": None, "live": 900, "1h": 3600, "4h": 4 * 3600, "1d": 86400, "1w": 7 * 86400, "all": 0}
+
+
+def session_end(started_at: float, lock_hm: str) -> float | None:
+    """When the running session is due to roll over: the first lock_time (local HH:MM) after it started."""
+    import datetime as dt
+
+    try:
+        h, m = (int(x) for x in str(lock_hm).split(":"))
+        start = dt.datetime.fromtimestamp(started_at)
+        end = start.replace(hour=h, minute=m, second=0, microsecond=0)
+    except (ValueError, OverflowError, OSError):
+        return None
+    if end <= start:
+        end += dt.timedelta(days=1)
+    return end.timestamp()
 STREAM_TOPICS = {"decision", "audit_layer", "trade_open", "trade_close", "trade_partial", "room_add", "scan_pass", "audit_pass",
                  "order_request", "push", "restart", "wake", "session_roll", "new_token", "migration", "fomo_logged_out", "fomo_resumed"}
 _BUCKETS = [
@@ -155,8 +170,24 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
             recap = {"started_at": since, "start_equity": night["start_cash"], "trades": night["trades"],
                      "passes": by.get("pass", 0), "kills": by.get("kill", 0) + by.get("reject", 0), "buys": by.get("buy", 0),
                      "sells": by.get("sell", 0)}
+        # the coin tape: the newest scan of each recently scanned coin, with the 1 h change the scanner read (never computed here)
+        ticker = await db.fetchall(
+            "SELECT s.mint, s.ts, s.h1_change_pct, s.verdict, COALESCE((SELECT symbol FROM coins c WHERE c.mint = s.mint), "
+            "(SELECT symbol FROM decisions d WHERE d.mint = s.mint AND d.symbol IS NOT NULL ORDER BY d.id DESC LIMIT 1)) AS symbol "
+            "FROM scans s WHERE s.id IN (SELECT MAX(id) FROM scans WHERE ts > ? GROUP BY mint) ORDER BY s.ts DESC LIMIT 16", (now - 3 * 3600,))
+        # change over the last hour: today's equity minus the last reading that is at least an hour old (no such reading = no data)
+        delta_1h, have = 0.0, False
+        for c, sql in zip(cards, ("SELECT equity_usd e FROM balance WHERE strategy='prompt' AND ts <= ? ORDER BY ts DESC LIMIT 1",
+                                  "SELECT equity_usd e FROM strat_balance WHERE strategy='orion_fast' AND ts <= ? ORDER BY ts DESC LIMIT 1")):
+            old = await db.fetchone(sql, (now - 3600,))
+            if c["balance"] is not None and old and old["e"] is not None:
+                delta_1h += c["balance"] - old["e"]
+                have = True
+        if recap:
+            recap["ends_at"] = session_end(recap["started_at"], s["lock_time"])
         return {
             "mode": await db.get_setting("mode", config.DEFAULT_MODE), "ts": now,
+            "ticker": ticker, "delta_1h": delta_1h if have else None,
             "strategies": cards, "agents": agents, "decisions": decisions, "radar": radar, "kills": kills, "night": recap,
             "feed": hub.status["feed"]() if "feed" in hub.status else None,
             "stages": hub.metrics.snapshot(), "loop_lag_ms": hub.lag.snapshot(),
@@ -203,8 +234,15 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
         if range not in RANGES:
             raise HTTPException(400, f"range must be one of {sorted(RANGES)}")
         now, span = time.time(), RANGES[range]
-        cut = now - span if span else 0.0
         s = await settings_obj()
+        window = None
+        if range == "night":  # the running session, drawn across its whole planned length (start -> lock time)
+            night = await db.fetchone("SELECT started_at FROM nights ORDER BY id DESC LIMIT 1")
+            cut = night["started_at"] if night else now - 86400
+            end = session_end(cut, s["lock_time"]) if night else None
+            window = [cut, max(end, now)] if end else None
+        else:
+            cut = now - span if span else 0.0
         series = []
         for name, sql, start in (
             ("prompt", "SELECT ts, equity_usd e FROM balance WHERE strategy='prompt' AND ts >= ? ORDER BY ts", float(s["paper_start_cash"])),
@@ -219,7 +257,7 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
         for strat, table in (("prompt", "positions"), ("orion_fast", "strat_positions")):
             for r in await db.fetchall(f"SELECT symbol, mint, closed_at, pnl_usd FROM {table} WHERE strategy=? AND closed_at >= ? AND pnl_usd IS NOT NULL ORDER BY closed_at", (strat, cut)):
                 markers.append({"strategy": strat, "ts": r["closed_at"], "pnl": r["pnl_usd"], "symbol": r["symbol"], "mint": r["mint"]})
-        return {"range": range, "series": series, "markers": markers[-80:], "now": now}
+        return {"range": range, "series": series, "markers": markers[-80:], "now": now, "window": window}
 
     # ---- activity / orders ---------------------------------------------------------------------------------------------------------
     @api.get("/activity")

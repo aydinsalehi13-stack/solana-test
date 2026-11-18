@@ -35,7 +35,8 @@ class FakeShots:
 
 
 @pytest.fixture
-async def env(tmp_path):
+async def env(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")  # never read this machine's own acceptance.json / live_test.json
     db = Database(tmp_path / "t.db")
     await db.start()
     await seed_demo(db)

@@ -4,59 +4,117 @@
   const D = window.D;
   const P = (D.panels = {});
 
-  /* ---------------------------------- ledger ---------------------------------- */
+  /* ---------------------------------- hero + the two strategies ---------------------------------- */
   const odo = {};
   P.ledger = (live) => {
+    // the big number is the whole desk: every strategy that has a balance, added up. No balance yet = no data.
+    const have = live.strategies.filter((s) => D.isNum(s.balance));
+    const total = have.length ? have.reduce((a, s) => a + s.balance, 0) : null;
+    const putIn = have.reduce((a, s) => a + s.start_cash, 0);
+    const trades = live.strategies.reduce((a, s) => a + s.trades, 0), wins = live.strategies.reduce((a, s) => a + s.wins, 0);
+    P.totals = { total, putIn, trades, wins, losses: trades - wins };
+    odo.total = odo.total || new D.Odometer(D.$('#bal-total'), (n) => D.usd(n));
+    odo.total.set(total);
+    const pnl = total == null ? null : total - putIn;
+    const el = D.$('#hero-pnl');
+    el.className = pnl == null ? 'flat' : D.dir(pnl);
+    el.textContent = pnl == null ? 'no data yet' : D.usd(pnl, { sign: true }) + ' · ' + wins + 'W ' + (trades - wins) + 'L';
+    D.$('#hero-in-text').textContent = total == null ? 'no balance yet' : 'in ' + D.usd(putIn, { d: putIn % 1 ? 2 : 0 }) + ' · ' + trades + (trades === 1 ? ' trade' : ' trades');
+    const mult = D.$('#hero-mult');
+    mult.hidden = total == null || !putIn;
+    if (!mult.hidden) mult.textContent = (total / putIn).toFixed(2) + '×';
+    const delta = D.$('#hero-delta');
+    delta.hidden = !D.isNum(live.delta_1h);
+    if (!delta.hidden) {
+      const txt = D.usd(live.delta_1h, { sign: true, d: Math.abs(live.delta_1h) >= 100 ? 0 : 2 });
+      if (delta.textContent !== txt) { delta.textContent = txt; delta.className = 'delta ' + D.dir(live.delta_1h); delta.style.animation = 'none'; void delta.offsetWidth; delta.style.animation = ''; }
+      delta.title = 'Change in the last hour'; delta.setAttribute('aria-label', 'Change in the last hour: ' + txt);
+    }
     for (const s of live.strategies) {
       const id = s.name;
       odo[id] = odo[id] || new D.Odometer(D.$('#bal-' + id), (n) => D.usd(n));
       odo[id].set(s.balance);
-      const pnl = D.$('#pnl-' + id);
-      if (s.pnl_usd == null) { pnl.className = 'lane__pnl flat'; pnl.textContent = 'no data'; }
-      else {
-        const dir = D.dir(s.pnl_usd);
-        pnl.className = 'lane__pnl ' + dir;
-        pnl.replaceChildren(D.h('span', { 'aria-hidden': 'true', text: D.arrow(s.pnl_usd) }), D.usd(s.pnl_usd, { sign: true }), D.h('span', { text: '(' + D.pct(s.pnl_pct, { sign: true }) + ')' }));
-      }
-      const dl = D.$('#stats-' + id);
-      const kv = [['Trades', s.trades], ['Win rate', s.win_rate == null ? 'no trades' : D.pct(s.win_rate, { d: 0 })], ['Last hour', s.trades_last_hour + ' trades'], ['Open', s.open.length], ['Fees', s.trades ? D.usd(s.fees_usd) : 'none yet']];
-      dl.replaceChildren(...kv.map(([k, v]) => D.h('div', null, D.h('dt', { text: k }), D.h('dd', { text: String(v) }))));
+      const p = D.$('#pnl-' + id);
+      if (s.pnl_usd == null) { p.className = 'strat__pnl flat'; p.textContent = 'no data'; }
+      else { p.className = 'strat__pnl ' + D.dir(s.pnl_usd); p.textContent = D.usd(s.pnl_usd, { sign: true }) + ' (' + D.pct(s.pnl_pct, { sign: true }) + ')'; }
+      D.$('#stats-' + id).replaceChildren(s.trades
+        ? s.trades + (s.trades === 1 ? ' trade' : ' trades') + ' · ' + D.pct(s.win_rate, { d: 0 }) + ' win · ' + s.open.length + ' open'
+        : 'no trades yet · ' + s.open.length + ' open', s.trades ? D.h('span', { class: 'strat__fees', text: ' · fees ' + D.usd(s.fees_usd) }) : null);
     }
-    D.$('#chart-legend').replaceChildren(...live.strategies.map((s) => D.h('span', null, D.h('i', { class: 'swatch swatch--' + (s.name === 'prompt' ? 'prompt' : 'orion') }), s.name + ' ', D.h('b', { text: D.usd(s.balance) }))));
+    const sw = (c) => D.h('i', { style: 'border-color:' + c });
+    D.$('#chart-legend').replaceChildren(D.h('span', null, D.h('i'), 'value'), D.h('span', null, D.h('i', { class: 'dash' }), 'put in'),
+      ...live.strategies.map((s) => D.h('span', { class: 'legend__s' }, sw(D.css(s.name === 'prompt' ? '--prompt' : '--orion')), s.name)));
   };
 
-  /* ---------------------------------- header ---------------------------------- */
+  /* ---------------------------------- header + the meta line under it ---------------------------------- */
+  const SHORT = { 'PumpPortal live': 'Live', 'DexScreener snapshots': 'Snapshots', 'feed down': 'Feed down' };
   P.header = (live) => {
     const pill = D.$('#mode-pill');
-    pill.textContent = live.mode; pill.className = 'pill ' + (live.mode === 'LIVE' ? 'pill--live' : 'pill--paper');
-    const f = live.feed;
-    D.$('#feed-badge').textContent = f ? f.badge : 'no feed';
-    const dot = D.$('#feed-dot');
-    dot.className = 'dot ' + (!f ? 'dot--bad' : f.badge === 'PumpPortal live' ? 'dot--ok' : f.badge === 'feed down' ? 'dot--bad' : 'dot--warn');
+    pill.textContent = live.mode === 'LIVE' ? 'LIVE' : 'paper mode'; pill.classList.toggle('is-live', live.mode === 'LIVE');
+    const f = live.feed, badge = f ? f.badge : 'no feed';
+    D.$('#feed-badge').textContent = badge;
+    D.$('#feed-short').textContent = !f ? 'No feed' : SHORT[badge] || 'Slow feed';
+    D.$('#live-pill').title = 'Coins and prices are coming from: ' + badge;
+    D.$('#feed-dot').className = 'dot ' + (!f ? 'dot--bad' : badge === 'PumpPortal live' ? 'dot--ok' : badge === 'feed down' ? 'dot--bad' : 'dot--warn');
+    const running = live.agents.filter((a) => a.running).length;
+    D.$('#hero-agents').textContent = running + (running === 1 ? ' agent' : ' agents');
+    P.night = live.night;
+    P.clock();
+  };
+  P.clock = () => {
+    D.$('#hero-clock').textContent = D.hm(Date.now() / 1000);
+    D.$('#hero-in').textContent = P.night ? D.durHM(Date.now() / 1000 - P.night.started_at) + ' in' : '';
+  };
+
+  /* ---------------------------------- the coin tape ---------------------------------- */
+  let tickerKey = '';
+  P.ticker = (live) => {
+    const rows = live.ticker || [], track = D.$('#ticker-track');
+    const key = rows.map((r) => r.mint + ':' + r.h1_change_pct).join('|');
+    if (key === tickerKey) return;   // same coins, same numbers: leave the moving tape alone
+    tickerKey = key;
+    if (!rows.length) { track.className = 'ticker__track is-still'; track.replaceChildren(D.h('span', { class: 'tk tk--wait', text: 'waiting for the first scanned coin' })); return; }
+    const chip = (r) => D.h('span', { class: 'tk', role: 'button', tabindex: '0', onclick: () => D.emit('open-coin', r.mint, r.symbol), onkeydown: (e) => { if (e.key === 'Enter') D.emit('open-coin', r.mint, r.symbol); } },
+      D.avatar(r.mint, r.symbol), D.sym(r.symbol, r.mint), D.h('span', { class: D.dir(r.h1_change_pct), text: D.isNum(r.h1_change_pct) ? D.pct(r.h1_change_pct, { sign: true, d: 2 }) : 'no data' }), D.h('small', { text: '1h' }));
+    const still = D.reduced() || rows.length < 4;
+    track.className = 'ticker__track' + (still ? ' is-still' : '');
+    track.style.setProperty('--dur', Math.max(24, rows.length * 4.5) + 's');
+    track.replaceChildren(...rows.map(chip), ...(still ? [] : rows.map(chip)));   // the second copy makes the loop seamless
   };
 
   /* ---------------------------------- agents ---------------------------------- */
   const agentEls = {};
+  const STRAT_OF = (name) => (name === 'orion' ? 'orion_fast' : 'prompt');
   P.agents = (live) => {
     const list = D.$('#agents');
     const running = live.agents.filter((a) => a.running).length;
-    D.$('#agents-title').textContent = 'Agents · ' + running + ' running';
+    D.$('#agents-count').textContent = running + ' running';
+    const st = D.$('#agents-run'); st.classList.toggle('is-off', running === 0); st.querySelector('.dot').className = 'dot ' + (running ? 'dot--ok' : '');
     for (const a of live.agents) {
       let el = agentEls[a.name];
       const c = D.agentColor(a.name);
       if (!el) {
-        el = agentEls[a.name] = { li: D.h('li', { class: 'agent', style: '--c:' + c }), now: D.h('p', { class: 'agent__now' }), dot: D.h('i', { class: 'dot' }), side: D.h('div', { class: 'agent__side' }), prev: null };
-        const main = D.h('div', { class: 'agent__main' }, D.h('div', { class: 'agent__name' }, el.dot, D.AGENTS[a.name].label), el.now);
-        el.li.append(D.h('i', { class: 'agent__tick' }), main, el.side);
+        el = agentEls[a.name] = { li: D.h('li', { class: 'agent' }), now: D.h('span', { class: 'agent__now' }), more: D.h('div', { class: 'agent__more' }), prev: null, key: '' };
+        const row = D.h('button', { class: 'agent__row', type: 'button', 'aria-expanded': 'false', 'aria-label': D.AGENTS[a.name].label + ': show its pace and controls',
+          onclick: () => { const open = el.li.classList.toggle('is-open'); row.setAttribute('aria-expanded', String(open)); } },
+          D.use('i-bot', 'bot'), D.h('span', { class: 'agent__name', text: D.AGENTS[a.name].label }), el.now, D.h('span', { class: 'agent__src', text: STRAT_OF(a.name) }));
+        el.li.append(row, el.more);
         list.append(el.li);
       }
       el.li.style.setProperty('--c', c);
-      if (el.prev != null && a.heartbeat_age_s != null && a.heartbeat_age_s + 0.4 < el.prev) { el.dot.classList.remove('is-beat'); void el.dot.offsetWidth; el.dot.classList.add('is-beat'); }
+      el.li.classList.toggle('is-idle', !a.running);
+      if (el.prev != null && a.heartbeat_age_s != null && a.heartbeat_age_s + 0.4 < el.prev) { el.li.classList.remove('is-beat'); void el.li.offsetWidth; el.li.classList.add('is-beat'); }   // a real heartbeat arrived
       el.prev = a.heartbeat_age_s;
-      el.dot.style.opacity = a.running ? 1 : 0.35;
       const l = a.last;
-      el.now.replaceChildren(...(a.paused ? ['paused by you'] : !a.running ? ['not running'] : l ? [D.h('b', { text: l.symbol || (l.mint || '').slice(0, 6) || 'desk' }), ' · ' + l.reason] : ['idle, nothing to judge yet']));
-      el.side.replaceChildren(D.spark(a.rate, c), D.ring(a.pass_rate, c),
+      const key = a.paused ? 'paused' : !a.running ? 'off' : l ? l.ts + '|' + l.reason : 'idle';
+      if (key !== el.key) {
+        el.now.replaceChildren(...(a.paused ? ['paused by you'] : !a.running ? ['not running'] : l ? [l.mint ? D.avatar(l.mint, l.symbol) : null, ' ', D.h('b', { text: l.mint ? D.sym(l.symbol, l.mint) : 'desk' }), ' ' + l.reason] : ['idle, nothing to judge yet']));
+        if (el.key) { el.now.classList.remove('is-swap'); void el.now.offsetWidth; el.now.classList.add('is-swap'); }
+        el.key = key;
+      }
+      const tenMin = a.rate.reduce((x, y) => x + y, 0);
+      el.more.replaceChildren(D.h('p', { class: 'agent__full', text: a.paused ? 'paused by you' : !a.running ? 'not running' : l ? (l.mint ? D.sym(l.symbol, l.mint) + ' · ' : '') + l.reason + ' · ' + D.ago(l.ts) + ' ago' : 'idle, nothing to judge yet' }),
+        D.h('small', { text: tenMin + ' in 10 min' }), D.spark(a.rate, c), D.ring(a.pass_rate, c),
         D.h('button', { class: 'pause-btn', type: 'button', 'aria-pressed': a.paused ? 'true' : 'false', 'aria-label': (a.paused ? 'Resume ' : 'Pause ') + D.AGENTS[a.name].label, text: a.paused ? 'Resume' : 'Pause',
           onclick: async () => { try { await D.json('/api/bots/' + a.name + '/' + (a.paused ? 'resume' : 'pause'), { method: 'POST' }); D.emit('refresh'); } catch (e) { D.toast(e.message, 'bad'); } } }));
     }
@@ -64,15 +122,16 @@
 
   /* ---------------------------------- decision log ---------------------------------- */
   const LOG = { rows: [], strategy: 'all', agents: new Set(), max: 300 };
+  let lastPush = 0;
   const decisionClass = (d) => (['pass', 'buy', 'size'].includes(d) ? 'reason--ok' : ['kill', 'reject', 'skip', 'drop'].includes(d) ? 'reason--no' : d === 'wait' ? 'reason--wait' : '');
   const logRow = (r, isNew) => {
-    const c = D.agentColor(r.bot);
-    const li = D.h('li', { style: '--c:' + c, class: isNew ? 'is-new' : '' },
-      D.h('time', { text: D.clock(r.ts) }), D.h('span', { class: 'tag', text: (D.AGENTS[r.bot] || { label: r.bot }).label }),
+    const c = D.agentColor(r.bot), t = D.clock(r.ts);
+    const open = () => { if (r.mint) D.emit('open-coin', r.mint, r.symbol); };
+    return D.h('li', { style: '--c:' + c, class: isNew ? 'is-new' : '', tabindex: r.mint ? '0' : null, role: r.mint ? 'button' : null, onclick: open, onkeydown: (e) => { if (e.key === 'Enter') open(); } },
+      D.h('time', null, t.slice(0, 5), D.h('span', { class: 'sec', text: t.slice(5) })), D.h('span', { class: 'tag', text: (D.AGENTS[r.bot] || { label: r.bot }).label }),
       D.h('div', { class: 'log__body' },
-        r.mint ? D.h('button', { class: 'coin-link', type: 'button', text: r.symbol || r.mint.slice(0, 6), onclick: () => D.emit('open-coin', r.mint, r.symbol) }) : D.h('span', { class: 'log__sym', text: 'desk' }),
-        D.h('span', { class: 'reason ' + decisionClass(r.decision), text: r.reason || r.decision }), r.value ? D.h('span', { class: 'meta', text: r.value }) : null));
-    return li;
+        r.mint ? D.avatar(r.mint, r.symbol) : null, D.h('span', { class: 'log__sym', text: r.mint ? D.sym(r.symbol, r.mint) : 'desk' }),
+        D.h('span', { class: 'reason ' + decisionClass(r.decision), text: r.reason || r.decision }), r.value ? D.h('span', { class: 'log__val', text: r.value }) : null));
   };
   const passes = (r) => (LOG.strategy === 'all' || r.strategy === LOG.strategy) && (LOG.agents.size === 0 || LOG.agents.has(r.bot));
   const renderLog = () => {
@@ -97,7 +156,14 @@
     if (!passes(d)) return;
     const ol = D.$('#log'); ol.prepend(logRow(d, true));
     while (ol.children.length > 200) ol.lastChild.remove();
+    const now = performance.now();   // the push runs at most twice a second: a burst of decisions just lands, it never stacks animations
+    if (now - lastPush > 500 && ol.scrollTop < 4 && !D.reduced()) { lastPush = now; ol.classList.remove('is-push'); void ol.offsetWidth; ol.classList.add('is-push'); }
     D.$('#log-empty').hidden = true;
+  };
+  P.stream = (ok) => {
+    const st = D.$('#stream-status');
+    st.className = 'status ' + (ok ? '' : 'is-warn'); st.querySelector('.dot').className = 'dot ' + (ok ? 'dot--ok' : 'dot--warn');
+    D.$('#stream-label').textContent = ok ? 'streaming' : 'reconnecting';
   };
 
   /* ---------------------------------- positions ---------------------------------- */
@@ -107,14 +173,14 @@
     if (posTab === 'open') {
       const rows = live.strategies.flatMap((s) => s.open.map((p) => ({ ...p, strategy: s.name })));
       box.replaceChildren(...rows.map((p) => D.h('div', { class: 'row' },
-        D.h('button', { class: 'row__coin', type: 'button', onclick: () => D.emit('open-coin', p.mint, p.symbol) }, D.h('i', { class: 'swatch swatch--' + (p.strategy === 'prompt' ? 'prompt' : 'orion') }), D.h('span', null, p.symbol || p.mint.slice(0, 6), D.h('small', { text: p.strategy + ' · ' + D.ago(p.opened_at) }))),
+        D.h('button', { class: 'row__coin', type: 'button', onclick: () => D.emit('open-coin', p.mint, p.symbol) }, D.avatar(p.mint, p.symbol), D.h('span', null, D.sym(p.symbol, p.mint), D.h('small', { text: p.strategy + ' · ' + D.ago(p.opened_at) }))),
         D.h('span', { class: 'row__num row__num--size', text: D.usd(p.size_usd) }),
         D.h('span', { class: 'row__num ' + D.dir(p.pnl_mark_usd) }, p.pnl_mark_usd == null ? 'no live price' : [D.arrow(p.pnl_mark_usd) + ' ' + D.usd(p.pnl_mark_usd, { sign: true }), D.h('small', { class: 'row__why', style: 'display:block', text: D.pct(p.pnl_mark_pct, { sign: true }) })]),
         D.h('button', { class: 'mini-btn', type: 'button', text: 'Open', onclick: () => D.emit('open-coin', p.mint, p.symbol) }))));
       empty.hidden = rows.length > 0; empty.textContent = 'No open positions. They appear here when the Executor or orion buys.';
     } else if (closedCache) {
       box.replaceChildren(...closedCache.map((t) => D.h('div', { class: 'row' },
-        D.h('button', { class: 'row__coin', type: 'button', onclick: () => D.emit('open-coin', t.mint, t.symbol) }, D.h('i', { class: 'swatch swatch--' + (t.strategy === 'prompt' ? 'prompt' : 'orion') }), D.h('span', null, t.symbol || t.mint.slice(0, 6), D.h('small', { text: t.strategy + ' · ' + D.ago(t.closed_at) + ' ago' }))),
+        D.h('button', { class: 'row__coin', type: 'button', onclick: () => D.emit('open-coin', t.mint, t.symbol) }, D.avatar(t.mint, t.symbol), D.h('span', null, D.sym(t.symbol, t.mint), D.h('small', { text: t.strategy + ' · ' + D.ago(t.closed_at) + ' ago' }))),
         D.h('span', { class: 'row__num row__num--size', text: D.usd(t.size_usd) }),
         D.h('span', { class: 'row__num ' + D.dir(t.pnl_usd) }, D.arrow(t.pnl_usd) + ' ' + D.usd(t.pnl_usd, { sign: true }), D.h('small', { class: 'row__why', style: 'display:block', text: D.pct(t.pnl_pct, { sign: true }) })),
         D.h('span', { class: 'row__why', text: t.exit_reason || '' }))));
@@ -203,7 +269,7 @@
   P.health = (live) => {
     const ul = D.$('#health'), bots = Object.entries(live.bots).sort();
     D.$('#health-meta').textContent = live.restarts.length ? live.restarts.length + ' restart' + (live.restarts.length > 1 ? 's' : '') : 'no restarts';
-    ul.replaceChildren(...bots.map(([k, age]) => D.h('li', null, D.h('i', { class: 'dot ' + (age < 30 ? 'dot--ok' : age < 95 ? 'dot--warn' : 'dot--bad'), style: age < 30 ? 'animation:none' : '' }), k, D.h('span', { class: 'health__age', text: D.dur(age) + ' ago' }))),
+    ul.replaceChildren(...bots.map(([k, age]) => D.h('li', null, D.h('i', { class: 'dot dot--still ' + (age < 30 ? 'dot--ok' : age < 95 ? 'dot--warn' : 'dot--bad') }), k, D.h('span', { class: 'health__age', text: D.dur(age) + ' ago' }))),
       ...live.restarts.slice(-3).map((r) => D.h('li', null, D.h('i', { class: 'dot dot--warn' }), 'restarted ' + r.bot, D.h('span', { class: 'health__age', text: r.reason }))));
     if (!bots.length) ul.append(D.h('li', null, D.h('span', { class: 'empty', text: 'No agent has reported yet' })));
   };
@@ -215,6 +281,36 @@
     const rows = [['Trades', n.trades], ['Coins passed', n.passes], ['Coins killed', n.kills], ['Buys', n.buys], ['Sells', n.sells], ['Started with', D.usd(n.start_equity)]];
     dl.replaceChildren(...rows.map(([k, v]) => D.h('div', null, D.h('dt', { text: k }), D.h('dd', { text: String(v) }))));
   };
+  /* The night recap sheet. Every figure is read when it opens: the session from /api/live, the trades from /api/activity. */
+  P.openRecap = async () => {
+    const live = D.state.live, dlg = D.$('#recap-sheet');
+    if (!live) return;
+    const n = live.night, T = P.totals || {}, note = D.$('#rc-note');
+    note.textContent = ''; note.className = 'sheet__note';
+    D.$('#rc-sub').textContent = 'paper · ' + (n ? D.hm(n.started_at) + ' → ' + (n.ends_at ? D.hm(n.ends_at) : 'open') : 'no session yet');
+    D.$('#rc-in').textContent = T.total == null ? 'no data' : D.usd(T.putIn);
+    const now = D.$('#rc-now'); now.textContent = T.total == null ? 'no data' : D.usd(T.total); now.className = T.total == null ? 'flat' : D.dir(T.total - T.putIn) === 'down' ? 'down' : 'up';
+    const mult = D.$('#rc-mult'); mult.hidden = T.total == null || !T.putIn; if (!mult.hidden) mult.textContent = (T.total / T.putIn).toFixed(2) + '×';
+    const running = live.agents.filter((a) => a.running).length;
+    const tiles = [['trades', n ? n.trades : 'no data'], ['passed', n ? n.passes : 'no data'], ['killed', n ? n.kills : 'no data'], ['agents', running]];
+    D.$('#rc-tiles').replaceChildren(...tiles.map(([k, v]) => D.h('div', null, D.h('dt', { text: k }), D.h('dd', { text: String(v) }))));
+    const lines = D.$('#rc-lines');
+    lines.replaceChildren(D.h('p', { class: 'dim', text: 'reading the trades' }));
+    if (!dlg.open) dlg.showModal();
+    try {
+      const closed = (await D.json('/api/activity?limit=200')).closed.filter((t) => t.pnl_usd != null && (!n || t.closed_at >= n.started_at));
+      const line = (label, t) => D.h('p', null, label + ' ', D.avatar(t.mint, t.symbol), ' ' + D.sym(t.symbol, t.mint) + ' ', D.h('span', { class: D.dir(t.pnl_usd), text: D.usd(t.pnl_usd, { sign: true }) }));
+      const out = [];
+      if (closed.length) {
+        const best = closed.reduce((a, b) => (b.pnl_usd > a.pnl_usd ? b : a)), worst = closed.reduce((a, b) => (b.pnl_usd < a.pnl_usd ? b : a));
+        const w = closed.filter((t) => t.pnl_usd > 0).length;
+        out.push(line('best', best), line('worst', worst), D.h('p', { text: 'win rate ' + Math.round(100 * w / closed.length) + '% · ' + w + ' won, ' + (closed.length - w) + ' lost this session' }));
+      } else out.push(D.h('p', { text: 'no closed trades this session yet' }));
+      out.push(D.h('p', { class: 'dim', text: live.strategies.length + ' strategies · ' + running + ' agents · paper money only' }));
+      lines.replaceChildren(...out);
+    } catch (e) { if (!(e instanceof D.AuthError)) lines.replaceChildren(D.h('p', { class: 'down', text: 'Could not read the trades: ' + e.message })); }
+  };
+
   P.lane = (live) => { D.$('#frame-meta').textContent = 'holding the lane: ' + ((live.lane && live.lane.holder) || 'nobody'); };
 
   /* ---------------------------------- account + settings ---------------------------------- */
@@ -225,7 +321,8 @@
         D.h('dl', { class: 'kv' }, D.h('dt', { text: 'FOMO handle' }), D.h('dd', { text: acc.handle || 'not proven yet' }), D.h('dt', { text: 'Wallet' }), D.h('dd', { text: acc.address || 'not proven yet' }), D.h('dt', { text: 'Mode' }), D.h('dd', { text: mode.mode })),
         D.h('p', { class: 'meta', style: 'margin:12px 0 2px', text: 'LIVE stays locked until every gate is met, and then only you can unlock it:' }),
         ...mode.gates.map((g) => D.h('p', { class: 'gate' }, D.h('span', { class: g.met ? 'up' : 'down', text: g.met ? '✓' : '✗' }), g.gate)),
-        D.h('button', { class: 'btn', type: 'button', style: 'margin-top:14px', text: 'Switch dark and light theme', onclick: () => D.theme.toggle() }));
+        D.h('div', { class: 'acct__btns' }, D.h('button', { class: 'btn', id: 'theme-btn-2', type: 'button', text: 'Light / dark', onclick: () => D.theme.toggle() }),
+          D.h('button', { class: 'btn', id: 'lock-btn-2', type: 'button', text: 'Lock', onclick: () => D.emit('lock') })));
     } catch (e) { if (!(e instanceof D.AuthError)) D.$('#account').textContent = 'Could not load the account: ' + e.message; }
   };
   const GROUPS = ['session', 'scanner', 'analyst', 'brain', 'executor', 'risk', 'fees', 'telegram'];

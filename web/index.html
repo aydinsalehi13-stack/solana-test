@@ -1,41 +1,111 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <title>fluffcore3 // FOMO DESK</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#000000">
-<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#f3f4f6">
+<meta name="color-scheme" content="light dark">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="FOMO DESK">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="FOMO Desk">
 <meta name="referrer" content="no-referrer">
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/app.css">
+<script src="/js/theme.js"></script>
 </head>
-<body data-tab="home">
+<body data-tab="home" class="is-booting">
 
-<!-- Login: the token is typed here, kept in this browser only, and never put in a URL. -->
+<!-- shared drawings: the desk mark, the little agent robot, a key -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-mark" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="27" fill="#0b0b0e"/>
+    <polyline points="15,57 34,57 43,57 51,29 61,75 69,57 84,57" fill="none" stroke="#fff" stroke-width="7.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="84" cy="57" r="6.2" fill="#22c55e"/>
+  </symbol>
+  <symbol id="i-bot" viewBox="0 0 32 32">
+    <path d="M16 8.5V4.6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+    <circle class="bot__led" cx="16" cy="3.6" r="2.3" fill="currentColor"/>
+    <rect x="1.6" y="13.2" width="4" height="7.6" rx="2" fill="currentColor" opacity=".75"/>
+    <rect x="26.4" y="13.2" width="4" height="7.6" rx="2" fill="currentColor" opacity=".75"/>
+    <rect x="4.6" y="8.2" width="22.8" height="18.2" rx="6.6" fill="currentColor"/>
+    <circle cx="11.9" cy="16.4" r="2.7" fill="#fff"/><circle cx="20.1" cy="16.4" r="2.7" fill="#fff"/>
+    <rect x="12.4" y="21.3" width="7.2" height="1.9" rx=".95" fill="#fff" opacity=".9"/>
+  </symbol>
+  <symbol id="i-key" viewBox="0 0 24 24">
+    <circle cx="8.2" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="2.1"/>
+    <path d="M12.4 12H21M17.6 12v3.4M20.6 12v2.4" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/>
+  </symbol>
+</svg>
+
+<!-- Splash: painted before any script runs. Its three lines are the three real things the page waits for. -->
+<div id="splash" class="splash" role="status" aria-label="Opening the desk">
+  <div class="splash__center">
+    <svg class="splash__mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#i-mark"/></svg>
+    <p class="splash__name">FOMO Desk</p>
+    <p class="splash__chip">fluffcore3 · paper mode</p>
+  </div>
+  <div class="boot" id="boot">
+    <p class="boot__cmd">$ desk connect · 3 checks</p>
+    <ul class="boot__steps" id="boot-steps">
+      <li data-step="ping"><span>desk · /api/ping</span><b></b></li>
+      <li data-step="live"><span>live state</span><b></b></li>
+      <li data-step="stream"><span>event stream</span><b></b></li>
+    </ul>
+    <div class="boot__bar"><i id="boot-fill"></i></div>
+    <p class="boot__pct" id="boot-pct">0%</p>
+  </div>
+</div>
+
+<!-- Connect: the token is typed here, kept in this browser only, and never put in a URL. -->
 <div id="login" class="login" hidden>
-  <form id="login-form" class="login__card" autocomplete="off">
-    <h1 class="wordmark wordmark--big"><span>fluffcore3</span><i>//</i><b>FOMO DESK</b></h1>
-    <p class="login__help">Enter the desk token. It is the <code>APP_TOKEN</code> line in <code>.env</code> on the machine that runs the desk.</p>
-    <label class="login__label" for="token-input">Desk token</label>
+  <form id="login-form" class="connect" autocomplete="off">
+    <i class="grab" aria-hidden="true"></i>
+    <div class="connect__icons" aria-hidden="true">
+      <svg class="tile" viewBox="0 0 100 100"><use href="#i-mark"/></svg>
+      <span class="connect__dots"><i></i><i></i><i></i></span>
+      <span class="tile tile--key"><svg viewBox="0 0 24 24" width="30" height="30"><use href="#i-key"/></svg></span>
+    </div>
+    <h1 class="connect__title">Connect to the desk</h1>
+    <p class="connect__sub">Enter the desk token to open the dashboard</p>
+    <dl class="connect__info">
+      <div><dt>desk</dt><dd>fluffcore3 · FOMO</dd></div>
+      <div><dt>network</dt><dd>Solana</dd></div>
+      <div><dt>mode</dt><dd>PAPER · no real money</dd></div>
+    </dl>
+    <ul class="connect__can">
+      <li class="yes">view balances and activity</li>
+      <li class="yes">paper sells ask you to confirm</li>
+      <li class="no">can't withdraw, deposit or switch to LIVE</li>
+    </ul>
+    <label class="login__label" for="token-input">Desk token <small>the <code>APP_TOKEN</code> line in <code>.env</code> on the machine that runs the desk</small></label>
     <input id="token-input" class="login__input" type="password" name="desk-token" autocomplete="off" autocapitalize="off" spellcheck="false" required>
     <p id="login-error" class="login__error" role="alert" hidden></p>
-    <button class="btn btn--primary" type="submit">Open desk</button>
+    <button class="cta cta--connect" id="connect-btn" type="submit"><span>Connect</span></button>
   </form>
 </div>
 
+<!-- Setup: after a fresh connect, each agent turns "ready" only when its real heartbeat is fresh. -->
+<div id="setup" class="setup" hidden>
+  <div class="setup__in">
+    <div class="brand"><svg class="brand__mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#i-mark"/></svg><span class="brand__name">FOMO Desk</span><span class="chip-mode chip-mode--plain">setup</span></div>
+    <p class="setup__line" id="setup-line"></p>
+    <div class="setup__cards" id="setup-cards"></div>
+  </div>
+</div>
+
 <header class="top">
-  <h1 class="wordmark"><span>fluffcore3</span><i>//</i><b>FOMO DESK</b></h1>
+  <div class="brand">
+    <svg class="brand__mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#i-mark"/></svg>
+    <h1 class="brand__name">FOMO Desk</h1>
+    <span id="mode-pill" class="chip-mode" title="Nothing here moves real money">paper mode</span>
+  </div>
   <div class="top__right">
-    <span id="mode-pill" class="pill pill--paper" title="Nothing here moves real money">PAPER</span>
-    <span class="feed" title="Where new coins and prices are coming from"><i id="feed-dot" class="dot"></i><span id="feed-badge">connecting</span></span>
-    <button id="theme-btn" class="icon-btn" type="button" aria-label="Switch between dark and light theme">
+    <span class="livepill" id="live-pill" title="Where new coins and prices are coming from"><i id="feed-dot" class="dot"></i><span id="feed-short">connecting</span></span>
+    <button id="theme-btn" class="icon-btn" type="button" aria-label="Switch between light and dark theme">
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></svg>
     </button>
     <button id="lock-btn" class="icon-btn" type="button" aria-label="Lock the dashboard">
@@ -52,62 +122,77 @@
 
 <main class="grid">
 
-  <!-- The ledger: both strategies side by side, straight on the black, no card. -->
-  <section class="ledger" data-tab="home" data-panel="ledger" aria-label="Both strategies">
+  <!-- Home: the coin tape, one big number, the night's line, then the two strategies. -->
+  <section class="ledger" data-tab="home" data-panel="ledger" aria-label="Balance and strategies">
+    <div class="ticker" id="ticker" aria-label="Coins the scanner looked at, with their 1 hour change"><div class="ticker__track" id="ticker-track"></div></div>
     <div class="ledger__cols">
-      <article class="lane" data-strategy="prompt">
-        <header class="lane__head"><i class="swatch swatch--prompt"></i><h2>prompt</h2><span class="lane__sub">master strategy</span></header>
-        <div class="lane__bal"><span class="od skeleton" id="bal-prompt" role="img" aria-label="loading"></span></div>
-        <p class="lane__pnl skeleton" id="pnl-prompt">loading</p>
-        <dl class="lane__stats" id="stats-prompt"></dl>
-      </article>
-      <article class="lane" data-strategy="orion_fast">
-        <header class="lane__head"><i class="swatch swatch--orion"></i><h2>orion_fast</h2><span class="lane__sub">fast momentum</span></header>
-        <div class="lane__bal"><span class="od skeleton" id="bal-orion_fast" role="img" aria-label="loading"></span></div>
-        <p class="lane__pnl skeleton" id="pnl-orion_fast">loading</p>
-        <dl class="lane__stats" id="stats-orion_fast"></dl>
-      </article>
-    </div>
-    <div class="chart">
-      <div class="chart__bar">
-        <div class="legend" id="chart-legend"></div>
-        <div class="range" role="tablist" aria-label="Chart range" id="range-tabs">
-          <button role="tab" data-range="live">LIVE</button><button role="tab" data-range="1h">1H</button><button role="tab" data-range="4h">4H</button>
-          <button role="tab" data-range="1d" aria-selected="true">1D</button><button role="tab" data-range="1w">1W</button><button role="tab" data-range="all">ALL</button>
+      <div class="ledger__left">
+        <div class="hero">
+          <p class="hero__meta"><span>paper</span><span id="feed-badge">connecting</span><span id="hero-agents">agents</span><span id="hero-in"></span></p>
+          <div class="hero__row">
+            <div class="hero__bal"><span class="od skeleton" id="bal-total" role="img" aria-label="loading"></span></div>
+            <span class="delta" id="hero-delta" hidden></span>
+          </div>
+          <div class="hero__chips">
+            <button class="chip-in" id="hero-in-chip" type="button" aria-label="Open the night recap"><span id="hero-in-text">loading</span></button>
+            <span class="mult" id="hero-mult" hidden></span>
+          </div>
+          <p class="hero__pnl"><span id="hero-pnl" class="flat">&nbsp;</span><time id="hero-clock"></time></p>
+        </div>
+        <div class="card strats" id="strats">
+          <article class="strat" data-strategy="prompt">
+            <i class="sdot sdot--prompt"></i><h2>prompt</h2><span class="strat__sub">master strategy</span>
+            <span class="strat__bal"><span class="od skeleton" id="bal-prompt" role="img" aria-label="loading"></span></span>
+            <p class="strat__pnl skeleton" id="pnl-prompt">loading</p>
+            <p class="strat__stats" id="stats-prompt"></p>
+          </article>
+          <article class="strat" data-strategy="orion_fast">
+            <i class="sdot sdot--orion"></i><h2>orion_fast</h2><span class="strat__sub">fast momentum</span>
+            <span class="strat__bal"><span class="od skeleton" id="bal-orion_fast" role="img" aria-label="loading"></span></span>
+            <p class="strat__pnl skeleton" id="pnl-orion_fast">loading</p>
+            <p class="strat__stats" id="stats-orion_fast"></p>
+          </article>
         </div>
       </div>
-      <div class="chart__stage" id="chart-stage">
-        <canvas id="equity" role="img" aria-label="Equity of both strategies over time"></canvas>
-        <canvas id="equity-fx" aria-hidden="true"></canvas>
-        <div class="tip" id="chart-tip" hidden></div>
-        <p class="empty chart__empty" id="chart-empty" hidden>Waiting for the first balance reading</p>
+      <div class="chart">
+        <div class="chart__stage" id="chart-stage">
+          <canvas id="equity" role="img" aria-label="Value of the desk over time against what was put in"></canvas>
+          <canvas id="equity-fx" aria-hidden="true"></canvas>
+          <div class="tip" id="chart-tip" hidden></div>
+          <p class="empty chart__empty" id="chart-empty" hidden>Waiting for the first balance reading</p>
+        </div>
+        <div class="chart__axis"><span id="chart-t0"></span><span class="legend" id="chart-legend"></span><span id="chart-t1"></span></div>
+        <div class="range" role="tablist" aria-label="Chart range" id="range-tabs">
+          <button role="tab" data-range="night" aria-selected="true"><span>NIGHT</span></button><button role="tab" data-range="live"><span>LIVE</span></button><button role="tab" data-range="1h"><span>1H</span></button><button role="tab" data-range="4h"><span>4H</span></button><button role="tab" data-range="1d"><span>1D</span></button><button role="tab" data-range="1w"><span>1W</span></button><button role="tab" data-range="all"><span>ALL</span></button>
+        </div>
       </div>
     </div>
+  </section>
+
+  <section class="panel panel--agents" data-tab="home agents" data-panel="agents">
+    <header class="panel__head"><h2 id="agents-title">agents · working the feed</h2><span class="status" id="agents-run"><i class="dot"></i><span id="agents-count">0 running</span></span></header>
+    <ul class="agents" id="agents"></ul>
+  </section>
+
+  <section class="panel panel--log" data-tab="home activity" data-panel="log">
+    <header class="panel__head"><h2>Grok core · decisions</h2><span class="status" id="stream-status"><i class="dot"></i><span id="stream-label">connecting</span></span></header>
+    <div class="chips" id="log-filters" role="group" aria-label="Filter the decision log"></div>
+    <div class="logclip"><ol class="log" id="log"></ol></div>
+    <p class="empty" id="log-empty" hidden>Waiting for the first decision</p>
+    <p class="meta log__count" id="log-count"></p>
+  </section>
+
+  <section class="panel panel--pos" data-tab="home" data-panel="positions">
+    <header class="panel__head"><h2>Positions</h2>
+      <div class="range range--small" role="tablist" aria-label="Open or closed" id="pos-tabs"><button role="tab" data-pos="open" aria-selected="true"><span>Open</span></button><button role="tab" data-pos="closed"><span>Closed</span></button></div>
+    </header>
+    <div class="table" id="positions"></div>
+    <p class="empty" id="pos-empty" hidden></p>
   </section>
 
   <section class="panel panel--flow" data-tab="agents" data-panel="flow">
     <header class="panel__head"><h2>Pipeline</h2><span class="meta" id="flow-meta">every dot is a real event</span></header>
     <div class="flow" id="flow-wrap"><canvas id="flow" role="img" aria-label="Coins moving through Scanner, Analyst, Brain, Executor and Risk"></canvas></div>
-  </section>
-
-  <section class="panel panel--agents" data-tab="agents" data-panel="agents">
-    <header class="panel__head"><h2 id="agents-title">Agents</h2><span class="meta">heartbeat, last decision, pass rate</span></header>
-    <ul class="agents" id="agents"></ul>
-  </section>
-
-  <section class="panel panel--log" data-tab="activity" data-panel="log">
-    <header class="panel__head"><h2>Grok core · decisions</h2><span class="meta" id="log-count"></span></header>
-    <div class="chips" id="log-filters" role="group" aria-label="Filter the decision log"></div>
-    <ol class="log" id="log"></ol>
-    <p class="empty" id="log-empty" hidden>Waiting for the first decision</p>
-  </section>
-
-  <section class="panel panel--pos" data-tab="home" data-panel="positions">
-    <header class="panel__head"><h2>Positions</h2>
-      <div class="range range--small" role="tablist" aria-label="Open or closed" id="pos-tabs"><button role="tab" data-pos="open" aria-selected="true">Open</button><button role="tab" data-pos="closed">Closed</button></div>
-    </header>
-    <div class="table" id="positions"></div>
-    <p class="empty" id="pos-empty" hidden></p>
   </section>
 
   <section class="panel panel--audit" data-tab="agents" data-panel="audit">
@@ -148,6 +233,7 @@
     <header class="panel__head"><h2>This night</h2><span class="meta" id="recap-meta"></span></header>
     <dl class="recap" id="recap"></dl>
     <p class="empty" id="recap-empty" hidden>No session has started yet</p>
+    <button class="btn btn--wide" id="recap-open" type="button">Open the night recap</button>
   </section>
 
   <section class="panel panel--account" data-tab="account" data-panel="account">
@@ -162,19 +248,20 @@
 
   <section class="panel panel--picks" data-tab="account" data-panel="picks">
     <header class="panel__head"><h2>Copy picks</h2></header>
-    <p class="empty">Not set up yet. Copy picks arrive together with the Telegram alerts.</p>
+    <p class="empty">Not set up yet. Copy picks are not built in this version.</p>
   </section>
 </main>
 
 <nav class="tabbar" id="tabbar" aria-label="Sections">
-  <button data-go="home" aria-current="page"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
-  <button data-go="agents"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="2.2"/><circle cx="18" cy="6" r="2.2"/><circle cx="18" cy="18" r="2.2"/><path d="M8 11l8-4M8 13l8 4"/></svg><span>Agents</span></button>
-  <button data-go="activity"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Activity</span></button>
-  <button data-go="account"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c0-3.6 3-6 7-6s7 2.4 7 6"/></svg><span>Account</span></button>
+  <button data-go="home" aria-current="page"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-6 8 6v8a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/></svg><span>Home</span></button>
+  <button data-go="agents"><svg viewBox="0 0 32 32" width="23" height="23" aria-hidden="true"><use href="#i-bot"/></svg><span>Agents</span></button>
+  <button data-go="activity"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Activity</span></button>
+  <button data-go="account"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.6"/><path d="M5 20c0-3.6 3-6 7-6s7 2.4 7 6"/></svg><span>Account</span></button>
 </nav>
 
 <dialog id="coin" class="sheet" aria-labelledby="coin-title">
   <div class="sheet__body">
+    <i class="grab" aria-hidden="true"></i>
     <header class="sheet__head">
       <div><h2 id="coin-title">Coin</h2><p class="meta" id="coin-sub"></p></div>
       <button class="icon-btn" id="coin-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
@@ -183,6 +270,24 @@
     <div class="audit audit--sheet" id="coin-audit"></div>
     <div class="sheet__actions" id="coin-actions"></div>
     <p class="sheet__note" id="coin-note" role="status"></p>
+  </div>
+</dialog>
+
+<!-- Night recap: every number is read from the desk when the sheet opens. -->
+<dialog id="recap-sheet" class="sheet sheet--recap" aria-labelledby="recap-sheet-title">
+  <div class="sheet__body">
+    <i class="grab" aria-hidden="true"></i>
+    <header class="rc__head">
+      <svg class="tile tile--md" viewBox="0 0 100 100" aria-hidden="true"><use href="#i-mark"/></svg>
+      <div><h2 id="recap-sheet-title">Night recap</h2><p class="rc__sub" id="rc-sub"></p></div>
+      <button class="icon-btn" id="recap-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </header>
+    <div><p class="rc__label">put in</p><p class="rc__in" id="rc-in"></p></div>
+    <div><p class="rc__label">now worth</p><p class="rc__now"><span id="rc-now"></span><span class="mult" id="rc-mult" hidden></span></p></div>
+    <dl class="rc__tiles" id="rc-tiles"></dl>
+    <div class="rc__lines" id="rc-lines"></div>
+    <button class="cta" id="rc-report" type="button"><span>open the full night report</span></button>
+    <p class="sheet__note" id="rc-note" role="status"></p>
   </div>
 </dialog>
 
@@ -195,11 +300,11 @@
   </div>
 </dialog>
 
-<script src="/js/core.js"></script>
-<script src="/js/odometer.js"></script>
-<script src="/js/charts.js"></script>
-<script src="/js/flow.js"></script>
-<script src="/js/panels.js"></script>
-<script src="/js/main.js"></script>
+<script src="/js/core.js" defer></script>
+<script src="/js/odometer.js" defer></script>
+<script src="/js/charts.js" defer></script>
+<script src="/js/flow.js" defer></script>
+<script src="/js/panels.js" defer></script>
+<script src="/js/main.js" defer></script>
 </body>
 </html>

@@ -92,6 +92,7 @@ def unexpected(page):
 async def ready(page):
     await page.wait_for_function("document.querySelector('#bal-prompt').getAttribute('aria-label') !== 'loading'", timeout=10000)
     await page.wait_for_function("document.querySelectorAll('#agents li').length === 6", timeout=10000)
+    await page.wait_for_function("document.querySelector('#splash').classList.contains('is-out')", timeout=10000)  # the splash has left
 
 
 async def scroll_all(page):
@@ -153,14 +154,20 @@ async def test_desktop_1440_every_panel_is_fed_by_the_desk(env):
     t = lambda sel: page.inner_text(sel)  # noqa: E731
     assert (await page.get_attribute("#bal-prompt", "aria-label")).startswith("$1") and "$" in await page.get_attribute("#bal-orion_fast", "aria-label")
     assert "+$" in await t("#pnl-prompt") and "−$" in await t("#pnl-orion_fast")
-    assert "Agents · 6 running" == await t("#agents-title")
+    assert "6 running" == await t("#agents-count") and "6 agents" == await t("#hero-agents")
+    total = float((await page.get_attribute("#bal-total", "aria-label")).replace("$", "").replace(",", ""))  # the big number is the two strategies added up
+    parts = [float((await page.get_attribute(f"#bal-{n}", "aria-label")).replace("$", "").replace(",", "")) for n in ("prompt", "orion_fast")]
+    assert abs(total - sum(parts)) < 0.011 and (await t("#hero-mult")).endswith("×") and "in $300 · 7 trades" == await t("#hero-in-text")
+    assert "3W 4L" in await t("#hero-pnl") and await page.is_visible("#hero-delta")
+    assert await page.locator("#ticker .tk").count() == 24 and "$PAWS" in await t("#ticker") and "+7.71%" in await t("#ticker")  # 12 coins, twice for the loop
+    assert await t("#stream-label") == "streaming" and await t("#chart-t0") != "" and "put in" in await t("#chart-legend")
     assert await page.locator("#agents li").count() == 6 and await page.locator("#agents svg.spark").count() == 6 and await page.locator("#agents svg.ring").count() == 6
     assert await page.locator("#positions .row").count() == 2 and "BORK" in await t("#positions")
     assert await page.locator("#audit .disc").count() == 8 and "Revoked" in await t("#audit")
     assert await page.locator("#kills .bar").count() >= 5 and await page.locator("#health li").count() >= 6
     assert "analyst.layer8" in await t("#speed") and "loop lag p95" in await t("#lag-chip")
     assert "17" in await t("#recap") and "fluffcore3" in await t("#account") and await page.locator("#settings details").count() == 8
-    assert await t("#feed-badge") == "PumpPortal live" and await t("#mode-pill") == "PAPER"
+    assert await t("#feed-badge") == "PumpPortal live" and await t("#feed-short") == "Live" and await t("#mode-pill") == "paper mode"
     assert not await page.is_visible("#tabbar")  # the tab bar is for phones only
     assert not await page.is_visible("#offline") and await page.locator(".skeleton").count() == 0
     # no horizontal scroll, no overlapping giants
@@ -187,10 +194,9 @@ async def test_phone_390_tabs_tap_targets_and_no_sideways_scroll(env):
     page = await env.page(390, 844, mobile=True)
     await ready(page)
     assert await page.is_visible("#tabbar") and await page.evaluate("document.documentElement.scrollWidth") <= 390
-    assert await page.is_visible("#lock-btn")  # the header fits: nothing is pushed off the edge
-    box = await page.locator("#lock-btn").bounding_box()
+    box = await page.locator("#live-pill").bounding_box()  # the header fits: nothing is pushed off the edge
     assert box["x"] + box["width"] <= 390
-    assert not await page.is_visible("#theme-btn")
+    assert not await page.is_visible("#theme-btn") and not await page.is_visible("#lock-btn")  # on a phone they live in Account
     shown = {"home": "ledger", "agents": "flow", "activity": "log", "account": "settings"}
     hidden = {"home": "flow", "agents": "log", "activity": "settings", "account": "ledger"}
     PROOF.mkdir(parents=True, exist_ok=True)
@@ -205,16 +211,57 @@ async def test_phone_390_tabs_tap_targets_and_no_sideways_scroll(env):
         assert small == [], f"tap targets under 44 px on {tab}: {small}"
         if tab == "agents":
             await scroll_all(page)
+        if tab == "account":
+            assert await page.is_visible("#lock-btn-2") and await page.is_visible("#theme-btn-2")
         await page.screenshot(path=str(PROOF / f"phone_390_{tab}.png"), full_page=(tab != "home"))
     assert page.errors == [], page.errors
 
 
-async def test_phone_ledger_shows_both_strategies_side_by_side(env):
+async def test_phone_home_is_one_number_then_the_line_then_both_strategies(env):
     page = await env.page(390, 844, mobile=True)
     await ready(page)
+    await page.wait_for_timeout(900)
+    top = await page.locator("#bal-total").bounding_box()
+    chart = await page.locator("#chart-stage").bounding_box()
     a, b = await page.locator("#bal-prompt").bounding_box(), await page.locator("#bal-orion_fast").bounding_box()
-    assert abs(a["y"] - b["y"]) < 4 and a["x"] + a["width"] <= b["x"]  # same row
-    assert a["x"] + a["width"] <= 390 and b["x"] + b["width"] <= 390
+    assert top["y"] < chart["y"] < a["y"] < b["y"]  # the reference order: number, line, the list under it
+    assert top["height"] >= 54 and top["x"] + top["width"] <= 390  # the big number is big, and fits
+    assert a["x"] + a["width"] <= 390 and b["x"] + b["width"] <= 390 and b["y"] + b["height"] < 844  # both strategies show without scrolling
+    await page.click('[data-panel="agents"] .agent__row >> nth=0')  # a tap opens the agent's pace and its pause button
+    assert await page.is_visible("#agents li >> nth=0 >> .pause-btn")
+    assert (await page.locator("#agents li >> nth=0 >> .pause-btn").bounding_box())["height"] >= 44
+
+
+async def test_a_fresh_connect_shows_each_agent_ready_only_from_its_real_heartbeat(env):
+    env.hub.heartbeats.forget("risk")  # one agent has no heartbeat: it must not be shown as ready
+    page = await env.page(390, 844, mobile=True, token=None)
+    await page.fill("#token-input", TOKEN)
+    await page.click("#login-form button[type=submit]")
+    await page.wait_for_selector("#connect-btn.is-ok")
+    assert "Connected" in await page.inner_text("#connect-btn")
+    await page.wait_for_selector("#setup:not([hidden])")
+    await page.wait_for_function("document.querySelectorAll('#setup .rchip.is-ready, #setup .rchip.is-off').length === 7", timeout=8000)
+    chips = await page.evaluate("[...document.querySelectorAll('#setup .rchip')].map(c => [c.textContent, c.classList.contains('is-ready')])")
+    assert sum(1 for _, ok in chips if ok) == 6 and [t for t, ok in chips if not ok] == ["RISKoffline"]
+    await page.wait_for_selector("#setup", state="hidden", timeout=8000)
+    assert await page.is_visible("#bal-total") and unexpected(page) == []
+
+
+async def test_night_recap_sheet_reads_everything_from_the_desk(env):
+    page = await env.page(390, 844, mobile=True)
+    await ready(page)
+    await page.click("#hero-in-chip")
+    await page.wait_for_selector("#recap-sheet[open]")
+    await page.wait_for_function("document.querySelector('#rc-lines').textContent.includes('win rate')", timeout=5000)
+    text = await page.inner_text("#recap-sheet")
+    assert "Night recap" in text and "put in" in text and "$300.00" in text and "now worth" in text
+    assert await page.inner_text("#rc-now") == await page.get_attribute("#bal-total", "aria-label")
+    assert "best" in text and "$PAWS" in text and "+$4.80" in text and "worst" in text and "$MOCHI" in text and "−$4.10" in text
+    assert "win rate 43% · 3 won, 4 lost" in text and "paper money only" in text
+    await page.wait_for_timeout(700)
+    PROOF.mkdir(parents=True, exist_ok=True)
+    await page.screenshot(path=str(PROOF / "phone_390_recap.png"))
+    assert page.errors == [], page.errors
 
 
 # ---- live updates without a reload -------------------------------------------------------------------------------------------------------------
@@ -237,7 +284,7 @@ async def test_events_update_the_page_without_a_reload(env):
     text = await page.inner_text(".banner--up")
     assert "WINNER" in text and "+$7.25" in text and "paper" in text
     hub.bus.publish("trade_open", {"mint": "LiveMint4xxxxxxxxxx", "symbol": "NEWBUY", "usd": 18.0, "price": 1.0, "strategy": "prompt"})
-    await page.wait_for_selector(".banner >> text=Bought NEWBUY", timeout=5000)
+    await page.wait_for_selector(".banner >> text=Bought $NEWBUY", timeout=5000)
     for i in range(12):  # a burst of everything the pipeline draws
         for t, d in (("room_add", {"mint": f"R{i}", "symbol": f"C{i}", "room": i}), ("scan_pass", {"mint": f"R{i}", "symbol": f"C{i}"}),
                      ("audit_pass", {"mint": f"R{i}", "symbol": f"C{i}", "score": 80}), ("order_request", {"mint": f"R{i}", "symbol": f"C{i}"}),
@@ -361,16 +408,19 @@ async def test_risk_cannot_be_paused_with_a_position_open(env):
 
 
 # ---- theme, motion, performance ------------------------------------------------------------------------------------------------------------------------
-async def test_light_theme_and_reduced_motion_render_without_errors(env):
+async def test_dark_theme_and_reduced_motion_render_without_errors(env):
     page = await env.page(1440, 900)
     await ready(page)
+    assert await page.evaluate("document.documentElement.dataset.theme") == "light"  # light is the default, like the reference
+    assert await page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(243, 244, 246)"
     await page.click("#theme-btn")
-    assert await page.evaluate("document.documentElement.dataset.theme") == "light"
+    assert await page.evaluate("document.documentElement.dataset.theme") == "dark"
     await page.wait_for_timeout(600)
     await scroll_all(page)
     PROOF.mkdir(parents=True, exist_ok=True)
-    await page.screenshot(path=str(PROOF / "desktop_1440_light.png"), full_page=True)
-    assert await page.evaluate("getComputedStyle(document.body).backgroundColor") != "rgb(0, 0, 0)"
+    await page.screenshot(path=str(PROOF / "desktop_1440_dark.png"), full_page=True)
+    assert await page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(0, 0, 0)"
+    assert await page.evaluate("localStorage.getItem('desk_theme')") == "dark"  # remembered for the next open
     assert page.errors == [], page.errors
     page2 = await env.page(390, 844, mobile=True, reduced_motion="reduce")
     await ready(page2)

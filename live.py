@@ -42,7 +42,8 @@ def capture_screenshot(url: str, token: str, out_path: str | Path, chrome: str |
             page = ctx.new_page()
             page.goto(url)
             page.wait_for_function("document.querySelector('#bal-prompt') && document.querySelector('#bal-prompt').getAttribute('aria-label') !== 'loading'", timeout=timeout_ms)
-            page.wait_for_timeout(1200)  # let the odometers settle
+            page.wait_for_function("document.querySelector('#splash').classList.contains('is-out')", timeout=timeout_ms)
+            page.wait_for_timeout(1600)  # let the sections rise in and the numbers finish rolling
             page.screenshot(path=str(out_path))
         finally:
             browser.close()

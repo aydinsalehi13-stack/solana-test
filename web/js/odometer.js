@@ -26,24 +26,30 @@
       const text = this.format(value);
       this.el.setAttribute('aria-label', text);
       const sig = text.replace(/[0-9]/g, '#');
-      if (sig !== this.sig) this.build(text, sig);  // the shape changed (a new digit, a comma): rebuild without rolling
-      else this.roll(text);
+      if (sig !== this.sig) {  // the shape changed (a new digit, a comma): rebuild. The very first number rolls up from zeros.
+        const first = this.sig === null && !this.rolledOnce && !D.reduced();
+        this.rolledOnce = true;
+        this.build(first ? text.replace(/[0-9]/g, '0') : text, sig);
+        if (first) requestAnimationFrame(() => requestAnimationFrame(() => this.roll(text)));
+      } else this.roll(text);
     }
 
     build(text, sig) {
       this.sig = sig;
       this.cols = [];
       this.el.textContent = '';
+      let frac = false;
       for (const ch of text) {
+        if (ch === '.') frac = true;
         if (/[0-9]/.test(ch)) {
           const strip = D.h('span', null, ...Array.from({ length: 10 }, (_, i) => D.h('i', { text: String(i) })));
           strip.style.transition = 'none';
           strip.style.transform = 'translateY(' + -Number(ch) + 'em)';
-          const col = D.h('span', { class: 'od__d', 'aria-hidden': 'true' }, strip);
+          const col = D.h('span', { class: 'od__d' + (frac ? ' is-frac' : ''), 'aria-hidden': 'true' }, strip);
           this.el.append(col);
           this.cols.push(strip);
         } else {
-          this.el.append(D.h('span', { class: 'od__s', 'aria-hidden': 'true', text: ch }));
+          this.el.append(D.h('span', { class: 'od__s' + (frac ? ' is-frac' : ''), 'aria-hidden': 'true', text: ch }));
         }
       }
       requestAnimationFrame(() => this.cols.forEach((s) => { s.style.transition = ''; }));
