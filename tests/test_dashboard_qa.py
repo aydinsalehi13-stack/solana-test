@@ -238,6 +238,7 @@ async def test_a_fresh_connect_shows_each_agent_ready_only_from_its_real_heartbe
     await page.fill("#token-input", TOKEN)
     await page.click("#login-form button[type=submit]")
     await page.wait_for_selector("#connect-btn.is-ok")
+    assert await page.locator("#login-form.is-linked use[href='#i-phantom']").count() == 1  # the purple tile is the Phantom ghost: a picture only
     assert "Connected" in await page.inner_text("#connect-btn")
     await page.wait_for_selector("#setup:not([hidden])")
     await page.wait_for_function("document.querySelectorAll('#setup .rchip.is-ready, #setup .rchip.is-off').length === 7", timeout=8000)
@@ -255,6 +256,7 @@ async def test_night_recap_sheet_reads_everything_from_the_desk(env):
     await page.wait_for_function("document.querySelector('#rc-lines').textContent.includes('win rate')", timeout=5000)
     text = await page.inner_text("#recap-sheet")
     assert "Night recap" in text and "put in" in text and "$300.00" in text and "now worth" in text
+    await page.wait_for_timeout(900)  # the figure counts up for 0.65 s, then rests on the exact value
     assert await page.inner_text("#rc-now") == await page.get_attribute("#bal-total", "aria-label")
     assert "best" in text and "$PAWS" in text and "+$4.80" in text and "worst" in text and "$MOCHI" in text and "−$4.10" in text
     assert "win rate 43% · 3 won, 4 lost" in text and "paper money only" in text
@@ -446,3 +448,47 @@ async def test_page_cpu_stays_under_30_percent_of_one_core(env):
         await page.wait_for_timeout(800)
     load = (await busy() - b0) / (time.time() - t0)
     assert load < 0.30, f"page used {load:.0%} of one core"
+
+
+# ---- live: the desk pushes the numbers once a second -----------------------------------------------------------------------------------
+async def test_the_big_number_positions_and_agents_follow_the_desk_live_without_a_reload_or_a_poll(env):
+    page = await env.page(390, 844, mobile=True)
+    await ready(page)
+    await page.evaluate("window.__marker = 'same-page'; window.__lives = 0; const f = window.fetch; window.fetch = (u, o) => { if (String(u).includes('/api/live')) window.__lives++; return f(u, o); }; null")
+    before = await page.get_attribute("#bal-total", "aria-label")
+    env.hub.status["equity"] = lambda: {"prompt": 171.25, "orion_fast": 140.5}  # what the desk holds in memory right now
+    await page.wait_for_function("document.querySelector('#bal-total').getAttribute('aria-label') === '$311.75'", timeout=4000)
+    assert before != "$311.75" and await page.get_attribute("#bal-prompt", "aria-label") == "$171.25"
+    assert "+$21.25 (+14.2%)" in await page.inner_text("#pnl-prompt") and "−$9.50" in await page.inner_text("#pnl-orion_fast")
+    assert await page.inner_text("#hero-mult") == "1.04×" and "+$11.75" in await page.inner_text("#hero-pnl")
+    # a position's price moves: its P&L cell follows (36 tokens x 0.75 - $18 = +$9.00)
+    env.hub.objects["marks"] = lambda: {DEMO_MINTS[3]: {"price": 0.75, "tokens": 36.0, "realized": 0.0}}
+    await page.wait_for_function("document.querySelector('#positions .row .row__pnl').textContent.includes('+$9.00')", timeout=4000)
+    # an agent's heartbeat stops arriving: it is shown as not running, and the count drops
+    env.hub.heartbeats.forget("risk")
+    await page.wait_for_function("document.querySelector('#agents-count').textContent === '5 running'", timeout=4000)
+    assert "not running" in await page.inner_text("#agents li >> nth=4") and await page.inner_text("#hero-agents") == "5 agents"
+    # a decision lands on the agent's own row at once
+    env.hub.bus.publish("decision", {"ts": time.time(), "bot": "scanner", "mint": "LiveMint9xxxxxxxxxx", "symbol": "ZAP", "decision": "kill", "reason": "liq $3.3K", "strategy": "prompt"})
+    await page.wait_for_function("document.querySelector('#agents li').textContent.includes('$ZAP')", timeout=3000)
+    assert "liq $3.3K" in await page.inner_text("#agents li >> nth=0")
+    assert await page.evaluate("window.__marker") == "same-page" and await page.evaluate("window.__lives") <= 1  # pushed, not polled
+    assert page.errors == [], page.errors
+
+
+async def test_a_missing_live_value_keeps_the_last_good_number(env):
+    page = await env.page(1440, 900)
+    await ready(page)
+    before = await page.get_attribute("#bal-total", "aria-label")
+    env.hub.status["equity"] = lambda: {"prompt": None, "orion_fast": None}  # the desk holds nothing: nothing may change, nothing is invented
+    await page.wait_for_timeout(2500)
+    assert await page.get_attribute("#bal-total", "aria-label") == before
+
+
+async def test_the_page_opens_fast_and_asks_for_everything_at_once(env):
+    page = await env.page(390, 844, mobile=True)
+    await ready(page)
+    t = await page.evaluate("""() => { const nav = performance.getEntriesByType('navigation')[0]; const r = (n) => performance.getEntriesByType('resource').find(e => e.name.includes(n));
+        return {dom: nav.domContentLoadedEventEnd, ping: r('/api/ping').startTime, live: r('/api/live').startTime, chart: r('/api/chart').startTime, liveEnd: r('/api/live').responseEnd}; }""")
+    assert max(t["ping"], t["live"], t["chart"]) - min(t["ping"], t["live"], t["chart"]) < 60, t  # asked together, not one after another
+    assert t["liveEnd"] < 1500, t  # the first real numbers are in well under 1.5 s on this machine

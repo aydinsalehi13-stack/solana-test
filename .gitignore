@@ -13,3 +13,4 @@ reports/
 *.db-shm
 .DS_Store
 deploy/
+proof/phase6/*.png

@@ -1,11 +1,7 @@
-These screenshots are produced by `tests/test_dashboard_qa.py` from a SEEDED DEMO database (`tests/seed.py`):
-every coin is called `DemoMint*` and every number was inserted by the test. They show how the dashboard looks and behaves.
-They are NOT results of the desk, and nothing in them was traded.
+No pictures are kept here.
 
-The dashboard itself never makes up a number: it shows whatever the desk has stored, and says "no data" otherwise.
+The dashboard tests (`tests/test_dashboard_qa.py`) write screenshots into this folder when they run. Those tests fill a throwaway
+database with made-up rows (`tests/seed.py`) only to check that every screen draws correctly, so the pictures are not shipped:
+they are ignored by git, and `tests/test_no_fake.py` fails if one is ever committed.
 
-- `desktop_1440.png` / `desktop_1440_dark.png`: the full page at 1440 px, light (the default) and dark.
-- `phone_390_*.png`: the four phone tabs at 390 px (Home, Agents, Activity, Account) and the night recap sheet.
-- `desktop_coin_sheet.png`: the coin sheet (candles, audit discs, Open on FOMO, two-step Sell now).
-
-Not covered here: opening it on a real iPhone and confirming port 9222 is unreachable from the phone (needs your devices).
+The app itself has no demo mode and holds no demo data. Every number it shows comes from the running desk, or it says "no data".

@@ -55,7 +55,17 @@
     D.$$('#boot-steps li').forEach((li) => { li.className = ''; li.querySelector('b').textContent = ''; });
     D.$('#boot-fill').style.transform = 'scaleX(0)'; D.$('#boot-pct').textContent = '0%';
   }
-  const splash = (on) => D.$('#splash').classList.toggle('is-out', !on);
+  /* Leaving the splash: its mark flies into the header's mark (same drawing, so it reads as one object), while the page appears behind it. */
+  function splash(on, fly) {
+    const el = D.$('#splash'), mark = D.$('.splash__mark');
+    if (on) { mark.style.transform = ''; el.classList.remove('is-out'); return; }
+    if (el.classList.contains('is-out')) return;
+    if (fly && !D.reduced()) {
+      const a = mark.getBoundingClientRect(), b = D.$('.top .brand__mark').getBoundingClientRect();
+      if (a.width && b.width) mark.style.transform = 'translate(' + (b.left + b.width / 2 - a.left - a.width / 2) + 'px,' + (b.top + b.height / 2 - a.top - a.height / 2) + 'px) scale(' + b.width / a.width + ')';
+    }
+    el.classList.add('is-out');
+  }
 
   /* ---------- online / offline ---------- */
   function setOnline(ok) {
@@ -101,7 +111,7 @@
     live.decisions.forEach((r) => { if (r.mint && r.symbol) D.symbols[r.mint] = r.symbol; });
     D.flow.setSnapshot(live);
     P.auditFromLive(live);
-    if (firstRender) { firstRender = false; loadChart(); P.account(); P.settings(); }
+    if (firstRender) { firstRender = false; P.account(); P.settings(); }
   }
 
   /* ---------- the live stream ---------- */
@@ -115,19 +125,20 @@
       case 'decision': if (d.mint && d.symbol) D.symbols[d.mint] = d.symbol; D.panels.logEvent(d); break;
       case 'audit_layer': D.panels.auditEvent(d); break;
       case 'audit_pass': D.panels.auditDone(d); break;
-      case 'trade_open': D.banner('Bought ' + D.sym(d.symbol, d.mint) + ' · ' + D.usd(d.usd), who(d) + ' · paper', 'flat', d); soon(1200); break;
-      case 'trade_partial': D.banner('Took profit on ' + D.sym(d.symbol, d.mint), (d.reason || '') + ' · paper', 'up', d); soon(1200); break;
+      case 'trade_open': D.banner('Bought ' + D.sym(d.symbol, d.mint) + ' · ' + D.usd(d.usd), who(d) + ' · paper', 'flat', d); soon(150); break;
+      case 'trade_partial': D.banner('Took profit on ' + D.sym(d.symbol, d.mint), (d.reason || '') + ' · paper', 'up', d); soon(150); break;
       case 'trade_close': {
         const up = d.pnl_usd >= 0;
         D.banner(['Sold ' + D.sym(d.symbol, d.mint) + ' · ', D.h('b', { text: D.usd(d.pnl_usd, { sign: true }) + ' (' + D.pct(d.pnl_pct, { sign: true, d: 0 }) + ')' })], (d.reason || '') + ' · paper · ' + (d.strategy || 'prompt'), up ? 'up' : 'down', d);
         if (d.pnl_usd > 5) D.confetti();   // only for a real profit above $5
-        soon(1200); break;
+        soon(150); break;
       }
       case 'restart': D.banner('Restarted ' + d.bot, d.reason, 'down'); soon(800); break;
       case 'session_roll': soon(800); break;
       default: break;
     }
   });
+  D.on('tick', (d) => D.panels.tick(d));   // once a second, pushed by the desk: the numbers move without asking
   D.on('stream', (ok) => {
     D.panels.stream(ok);
     if (ok) { bootStep('stream', 'ok', 'open'); soon(300); } else if (D.token()) poll();   // a dropped stream is noticed at once, not at the next poll
@@ -143,7 +154,7 @@
     bootReset(); splash(true);   // the dashboard is never left visible behind the connect sheet
     const box = D.$('#login'), err = D.$('#login-error'), btn = D.$('#connect-btn');
     box.classList.remove('is-out'); box.hidden = false; document.body.style.overflow = 'hidden';
-    btn.classList.remove('is-ok', 'is-busy'); btn.firstElementChild.textContent = 'Connect';
+    btn.classList.remove('is-ok', 'is-busy'); btn.firstElementChild.textContent = 'Connect'; D.$('#login-form').classList.remove('is-linking', 'is-linked');
     err.hidden = !msg; err.textContent = msg || '';
     if (!window.matchMedia('(pointer: coarse)').matches) setTimeout(() => D.$('#token-input').focus(), 50);
   }
@@ -152,7 +163,8 @@
     e.preventDefault();
     const t = D.$('#token-input').value.trim(), btn = D.$('#connect-btn');
     if (!t || btn.classList.contains('is-busy')) return;
-    btn.classList.add('is-busy');
+    const form = D.$('#login-form');
+    btn.classList.add('is-busy'); btn.firstElementChild.textContent = 'Checking…'; form.classList.add('is-linking');
     D.setToken(t);
     try { await D.json('/api/ping'); } catch (err) {
       D.setToken('');
@@ -160,7 +172,7 @@
       return;
     }
     D.$('#token-input').value = '';
-    btn.classList.remove('is-busy'); btn.classList.add('is-ok'); btn.firstElementChild.textContent = 'Connected';
+    btn.classList.remove('is-busy'); btn.classList.add('is-ok'); btn.firstElementChild.textContent = 'Connected'; form.classList.add('is-linked');
     await wait(520);
     D.$('#login').classList.add('is-out');
     await wait(360);
@@ -208,6 +220,7 @@
   /* ---------- tabs and controls ---------- */
   D.$$('#tabbar button').forEach((b) => b.addEventListener('click', () => {
     document.body.dataset.tab = b.dataset.go;
+    D.$('#tabbar').style.setProperty('--i', D.$$('#tabbar button').indexOf(b));
     document.body.classList.add('is-tabbing'); setTimeout(() => document.body.classList.remove('is-tabbing'), 520);
     D.$$('#tabbar button').forEach((x) => { if (x !== b) x.removeAttribute('aria-current'); else x.setAttribute('aria-current', 'page'); });
     scrollTo({ top: 0 });
@@ -235,6 +248,32 @@
       D.$('#recap-sheet').close();
       if (location.hash === '#report=' + r.date) openReportFromHash(); else location.hash = '#report=' + r.date;
     } catch (e) { if (!(e instanceof D.AuthError)) { note.className = 'sheet__note is-bad'; note.textContent = 'Could not write the report: ' + e.message; } }
+  });
+
+  /* ---------- sheets follow the finger: pull one down from its top edge to close it ---------- */
+  D.$$('dialog.sheet').forEach((dlg) => {
+    let y0 = null, dy = 0, t0 = 0;
+    dlg.addEventListener('touchstart', (e) => {
+      const r = dlg.getBoundingClientRect(), y = e.touches[0].clientY;
+      if (dlg.scrollTop > 0 || y - r.top > 90 || e.target.closest('button')) { y0 = null; return; }   // only from the grab area, never mid-scroll
+      y0 = y; dy = 0; t0 = performance.now();
+    }, { passive: true });
+    dlg.addEventListener('touchmove', (e) => {
+      if (y0 == null) return;
+      dy = Math.max(0, e.touches[0].clientY - y0);
+      if (dy > 4) { dlg.classList.add('is-dragging'); dlg.style.transform = 'translateY(' + dy + 'px)'; }
+    }, { passive: true });
+    const end = () => {
+      if (y0 == null) return;
+      const fast = dy / Math.max(1, performance.now() - t0) > 0.6;
+      y0 = null;
+      if (!dlg.classList.contains('is-dragging')) return;
+      dlg.classList.remove('is-dragging'); dlg.classList.add('is-settling');
+      const shut = dy > 120 || (fast && dy > 40);
+      dlg.style.transform = shut ? 'translateY(105%)' : 'translateY(0)';
+      setTimeout(() => { dlg.classList.remove('is-settling'); dlg.style.transform = ''; if (shut && dlg.open) dlg.close(); }, 290);
+    };
+    dlg.addEventListener('touchend', end); dlg.addEventListener('touchcancel', end);
   });
 
   /* ---------- masonry: each panel spans as many 8 px rows as it is tall (700 px and wider) ---------- */
@@ -279,24 +318,25 @@
       setInterval(() => D.panels.clock(), 5000);
     }
     bootReset(); splash(true);
-    bootStep('ping', 'wait', '…');
-    if (fresh) bootStep('ping', 'ok', 'ok');   // the connect sheet already asked /api/ping with this token
-    else {
-      try { await D.json('/api/ping'); bootStep('ping', 'ok', 'ok'); } catch (e) { if (e instanceof D.AuthError) return; bootStep('ping', 'bad', 'no answer'); }
-    }
-    bootStep('live', 'wait', '…');
-    await poll();
-    if (!booted) return;   // the token was refused meanwhile: the connect sheet is up
+    // everything is asked for at once: the ping, the live state, the chart and the event stream do not wait for each other
+    bootStep('ping', 'wait', '…'); bootStep('live', 'wait', '…'); bootStep('stream', 'wait', '…');
+    const ping = fresh ? Promise.resolve(true) : D.json('/api/ping').then(() => true, (e) => (e instanceof D.AuthError ? null : false));
+    const first = poll();
+    loadChart();
+    D.startStream();
+    const ok = await ping;   // on a fresh connect the sheet already asked /api/ping with this token
+    if (ok === null || !booted) return;   // the token was refused: the connect sheet is up
+    bootStep('ping', ok ? 'ok' : 'bad', ok ? 'ok' : 'no answer');
+    await first;
+    if (!booted) return;
     const live = D.state.live;
     bootStep('live', live ? 'ok' : 'bad', live ? live.agents.filter((a) => a.running).length + ' agents' : 'offline');
-    bootStep('stream', 'wait', '…');
-    D.startStream();
     openReportFromHash();
-    const floor = 620 - (performance.now() - T0);   // never a flash: the splash is on screen for at least ~0.6 s after the page opened
+    const floor = 420 - (performance.now() - T0);   // never a flash: the splash is on screen for at least ~0.4 s after the page opened
     if (floor > 0) await wait(floor);
     if (!booted) return;
     if (fresh && live && !D.reduced()) await runSetup(live);
-    else { splash(false); document.body.classList.add('is-ready'); }
+    else { document.body.classList.add('is-ready'); splash(false, true); }
     setTimeout(() => document.body.classList.add('is-settled'), 1400);
   }
 

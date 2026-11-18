@@ -24,6 +24,8 @@ AGENTS = ["scanner", "analyst", "brain", "executor", "risk", "orion"]
 MINT_RE = re.compile(r"^[A-Za-z0-9]{6,64}$")
 POSITIVE = ("pass", "buy", "size")
 NEGATIVE = ("kill", "reject", "skip", "drop")
+TICK_S = 1.0  # with nothing moving, the stream still sends the heartbeats this often
+TICK_LOOK_S = 0.25  # how often it looks for a moved number; a change is pushed at once, so the page is at most this far behind
 RANGES = {"night": None, "live": 900, "1h": 3600, "4h": 4 * 3600, "1d": 86400, "1w": 7 * 86400, "all": 0}
 
 
@@ -137,6 +139,7 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
         decisions = await db.fetchall("SELECT ts, bot, mint, symbol, decision, reason, value, strategy FROM decisions ORDER BY id DESC LIMIT 60")
         recent = await db.fetchall("SELECT ts, bot, decision, mint, symbol, reason FROM decisions WHERE ts > ? ORDER BY id DESC LIMIT 900", (now - 3600,))
         ages = hub.heartbeats.ages()
+        per_hour = {r["bot"]: r["n"] for r in await db.fetchall("SELECT bot, COUNT(*) n FROM decisions WHERE ts > ? GROUP BY bot", (now - 3600,))}
         agents = []
         for name in AGENTS:
             rows = [r for r in recent if r["bot"] == name]
@@ -150,7 +153,7 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
             neg = sum(1 for r in rows[:50] if r["decision"] in NEGATIVE)
             agents.append({"name": name, "heartbeat_age_s": None if name not in ages else round(ages[name], 1),
                            "running": name in ages and ages[name] < 95, "paused": name in hub.paused, "last": last,
-                           "rate": bins, "pass_rate": (100.0 * pos / (pos + neg)) if pos + neg else None})
+                           "rate": bins, "per_hour": per_hour.get(name, 0), "pass_rate": (100.0 * pos / (pos + neg)) if pos + neg else None})
         radar = await db.fetchall(
             "SELECT ts, bot, mint, symbol, decision, reason FROM decisions WHERE bot IN ('scanner','analyst') "
             "AND decision IN ('pass','kill','reject','drop') AND ts > ? ORDER BY id DESC LIMIT 80", (now - 5400,))
@@ -198,6 +201,17 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
             "audit": last_audit,
         }
 
+    def live_tick() -> dict:
+        """The live part of the dashboard, straight from memory: each strategy's equity, every open position's last real price,
+        the agents' heartbeats and the feed. A value the desk does not hold is None (the page then keeps its last good number)."""
+        ages = hub.heartbeats.ages()
+        marks = objects["marks"]() if "marks" in objects else {}
+        feed = hub.status["feed"]() if "feed" in hub.status else None
+        return {"equity": hub.status["equity"]() if "equity" in hub.status else None,
+                "marks": {m: [v.get("price"), v.get("tokens"), v.get("realized")] for m, v in marks.items()},
+                "ages": {k: round(ages[k], 1) for k in AGENTS if k in ages}, "paused": [k for k in AGENTS if k in hub.paused],
+                "feed": feed["badge"] if feed else None}
+
     # ---- stream (server-sent events; the page reads it with fetch + the token header) -------------------------------------------
     @api.get("/stream")
     async def stream(request: Request):
@@ -205,13 +219,21 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
             with hub.bus.subscribe() as q:
                 yield sse({"seq": 0, "ts": time.time(), "topic": "hello", "data": {}})
                 window_start, window_n = 0.0, 0
+                next_look, last_sent, last_key = 0.0, 0.0, None
                 while True:
                     if await request.is_disconnected():
                         return
+                    now_m = time.monotonic()
+                    if now_m >= next_look:  # four looks a second at what the desk holds in memory (no database read)
+                        next_look = now_m + TICK_LOOK_S
+                        tick = live_tick()
+                        key = (tick["equity"], tick["marks"], tick["feed"], tick["paused"])
+                        if key != last_key or now_m - last_sent >= TICK_S:  # a number moved: sent at once. Nothing moved: once a second, for the heartbeats
+                            last_key, last_sent = key, now_m
+                            yield sse({"seq": 0, "ts": time.time(), "topic": "tick", "data": tick})
                     try:
-                        ev = await asyncio.wait_for(q.get(), timeout=15)
+                        ev = await asyncio.wait_for(q.get(), timeout=max(0.02, next_look - time.monotonic()))
                     except asyncio.TimeoutError:
-                        yield ": ping\n\n"
                         continue
                     out = shape_event(ev)
                     if out is None:

@@ -38,11 +38,30 @@
       this.dirty = true;
     },
 
+    /* A live reading from the stream: the newest point of each line follows it at once (one live point per 20 s is kept;
+       the full series is reloaded from the desk every 30 s anyway). */
+    live(strategies, ts) {
+      if (!this.data.series.length) return;
+      let changed = false;
+      for (const st of strategies) {
+        const s = this.data.series.find((q) => q.name === st.name);
+        if (!s || !D.isNum(st.balance)) continue;
+        const last = s.points[s.points.length - 1];
+        if (last && last[2] && ts - last[2] < 20) { if (last[1] !== st.balance) changed = true; last[0] = ts; last[1] = st.balance; }
+        else if (!last || ts > last[0]) { s.points.push([ts, st.balance, ts]); changed = true; }
+      }
+      if (!changed) return;
+      if (this.data.window && ts > this.data.window[1]) this.data.window[1] = ts;
+      this.model = this.build(this.data);
+      D.$('#chart-empty').hidden = !!this.model;
+      this.dirty = true;
+    },
+
     /* Turn the two balance series into dollars above/below start, plus their sum on a shared clock. */
     build(p) {
       const live = p.series.filter((s) => s.points.length > 0);
       if (!live.some((s) => s.points.length > 1)) return null;
-      const times = Array.from(new Set(live.flatMap((s) => s.points.map((q) => q[0])))).sort((a, b) => a - b);
+      const times = Array.from(new Set(live.flatMap((s) => s.points.map((q) => q[0])))).sort((a, b) => a - b);   // (live points carry a third value: when they were added)
       const idx = live.map(() => 0);
       const total = times.map((t) => {
         let sum = 0;
@@ -52,7 +71,7 @@
         });
         return [t, sum];
       });
-      const lines = live.map((s) => ({ name: s.name, start: s.start_cash, points: s.points.map(([t, v]) => [t, v - s.start_cash]) }));
+      const lines = live.map((s) => ({ name: s.name, start: s.start_cash, points: s.points.map((q) => [q[0], q[1] - s.start_cash]) }));
       const putIn = live.reduce((a, s) => a + s.start_cash, 0);
       let lo = 0, hi = 0;
       for (const [, v] of total) { lo = Math.min(lo, v); hi = Math.max(hi, v); }

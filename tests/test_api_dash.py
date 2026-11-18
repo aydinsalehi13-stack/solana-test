@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -243,7 +244,7 @@ async def test_event_stream_delivers_trimmed_events_and_drops_internal_topics(tm
                 seen = []
                 while len(seen) < 3:
                     ln = await asyncio.wait_for(anext(lines), 5)
-                    if ln.startswith("data: "):
+                    if ln.startswith("data: ") and json.loads(ln[6:])["topic"] != "tick":  # the once-a-second live tick has its own test
                         seen.append(json.loads(ln[6:]))
                 assert [e["topic"] for e in seen[:2]] == ["decision", "push"]  # 'trade' was dropped
                 assert seen[0]["data"]["reason"] == "liq $14.2K" and "secret_field" not in seen[0]["data"]
@@ -261,3 +262,48 @@ async def test_event_stream_delivers_trimmed_events_and_drops_internal_topics(tm
     finally:
         await srv.stop()
         await db.stop()
+
+
+async def test_the_stream_pushes_a_live_tick_every_second_from_memory_and_never_invents_a_value(tmp_path):
+    db = Database(tmp_path / "s.db")
+    await db.start()
+    hub = Hub()
+    hub.heartbeats.beat("scanner")
+    hub.paused.add("brain")
+    srv = await LiveServer(db, hub, TOKEN).start()
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            async with c.stream("GET", srv.url + "/api/stream", headers=H) as r:
+                lines = r.aiter_lines()
+
+                async def tick():
+                    while True:
+                        ln = await asyncio.wait_for(anext(lines), 5)
+                        if ln.startswith("data: ") and json.loads(ln[6:])["topic"] == "tick":
+                            return json.loads(ln[6:])
+
+                t0 = time.time()
+                first = await tick()
+                assert time.time() - t0 < 0.5  # the first one comes with the connection, not a second later
+                assert first["data"]["equity"] is None and first["data"]["marks"] == {} and first["data"]["feed"] is None  # nothing known: nothing claimed
+                assert list(first["data"]["ages"]) == ["scanner"] and first["data"]["paused"] == ["brain"]
+                hub.status["equity"] = lambda: {"prompt": 151.5, "orion_fast": None}
+                hub.objects["marks"] = lambda: {"MintA": {"price": 0.5, "tokens": 10.0, "realized": 1.0}, "MintB": {"price": None, "tokens": 3.0, "realized": 0.0}}
+                hub.status["feed"] = lambda: {"badge": "PumpPortal live"}
+                t1 = time.time()
+                second = await tick()
+                assert time.time() - t1 < 0.6  # a moved number is pushed within a quarter of a second, not at the next full second
+                assert second["data"]["equity"] == {"prompt": 151.5, "orion_fast": None} and second["data"]["feed"] == "PumpPortal live"
+                assert second["data"]["marks"] == {"MintA": [0.5, 10.0, 1.0], "MintB": [None, 3.0, 0.0]}  # a coin with no price stays without one
+                third = await tick()
+                assert 0.7 < third["ts"] - second["ts"] < 1.5 and third["data"]["equity"] == second["data"]["equity"]  # nothing moved: once a second
+    finally:
+        await srv.stop()
+        await db.stop()
+
+
+async def test_live_counts_each_agents_decisions_in_the_last_hour(env):
+    c, db, _ = env
+    agents = {a["name"]: a for a in (await c.get("/api/live")).json()["agents"]}
+    n = (await db.fetchone("SELECT COUNT(*) n FROM decisions WHERE bot='scanner' AND ts > ?", (time.time() - 3600,)))["n"]
+    assert agents["scanner"]["per_hour"] == n > 0

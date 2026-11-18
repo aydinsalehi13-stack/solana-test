@@ -119,6 +119,12 @@ async def build(hub, db, clients: sources.Clients, dex: sources.DexScreener, clo
                 out[m] = {"price": mm.price_usd if mm else None, "tokens": p["tokens"], "realized": p["proceeds"]}
         return out
 
+    def equity() -> dict:
+        """What each strategy is worth right now, from memory: the same sum the balance rows store, without waiting for the next row."""
+        return {"prompt": book.equity({}), "orion_fast": orion.engine.equity() if orion is not None else None}
+
+    hub.status["equity"] = equity
+
     def brain_size(payload: dict):
         """What the Brain would size for an audited coin (used by the Telegram 'buy X' preview)."""
         from bots.brain import size_trade

@@ -130,7 +130,7 @@
             if (chunk.startsWith('data: ')) {
               let ev = null;
               try { ev = JSON.parse(chunk.slice(6)); } catch (e) { /* ignore a torn frame */ }
-              if (ev) { if (ev.topic === 'hello') { delay = 1; D.emit('stream', true); } else D.emit('event', ev); }
+              if (ev) { if (ev.topic === 'hello') { delay = 1; D.emit('stream', true); } else if (ev.topic === 'tick') D.emit('tick', ev.data || {}); else D.emit('event', ev); }
             }
           }
         }
