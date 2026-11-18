@@ -492,3 +492,16 @@ async def test_the_page_opens_fast_and_asks_for_everything_at_once(env):
         return {dom: nav.domContentLoadedEventEnd, ping: r('/api/ping').startTime, live: r('/api/live').startTime, chart: r('/api/chart').startTime, liveEnd: r('/api/live').responseEnd}; }""")
     assert max(t["ping"], t["live"], t["chart"]) - min(t["ping"], t["live"], t["chart"]) < 60, t  # asked together, not one after another
     assert t["liveEnd"] < 1500, t  # the first real numbers are in well under 1.5 s on this machine
+
+
+async def test_an_open_night_counts_its_trades_from_real_closed_trades_never_null(env):
+    page = await env.page(390, 844, mobile=True)
+    await ready(page)
+    await env.db.execute("UPDATE nights SET trades=NULL")  # a night that is still open has no stored count yet
+    await page.reload()
+    await ready(page)
+    live = await page.evaluate("D.state.live.night")
+    assert live["trades"] == 7  # 3 prompt + 4 orion_fast closed trades since the night started
+    await page.click("#hero-in-chip")
+    await page.wait_for_function("document.querySelector('#rc-lines').textContent.includes('win rate')", timeout=5000)
+    assert "null" not in await page.inner_text("#recap-sheet") and "null" not in await page.inner_text("#recap")

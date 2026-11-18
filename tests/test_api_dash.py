@@ -63,7 +63,7 @@ async def test_live_payload_is_built_from_the_database(env):
     assert j["radar"] and all(r["decision"] in ("pass", "kill", "reject", "drop") for r in j["radar"])
     kills = {(k["bot"], k["bucket"]): k["count"] for k in j["kills"]}
     assert kills[("scanner", "liquidity")] > 0 and kills[("scanner", "top 10")] > 0 and ("analyst", "layer 3 dev wallet") in kills
-    assert j["night"]["trades"] == 3 and j["night"]["passes"] > 0 and j["mode"] == "PAPER"
+    assert j["night"]["trades"] == 7 and j["night"]["passes"] > 0 and j["mode"] == "PAPER"
 
 
 async def test_open_positions_get_live_marks_from_the_desk(env):

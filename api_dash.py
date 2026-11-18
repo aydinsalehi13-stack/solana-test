@@ -170,7 +170,11 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
             since = night["started_at"]
             by = {r["decision"]: r["n"] for r in await db.fetchall(
                 "SELECT decision, COUNT(*) n FROM decisions WHERE ts >= ? GROUP BY decision", (since,))}
-            recap = {"started_at": since, "start_equity": night["start_cash"], "trades": night["trades"],
+            # the night row only stores its trade count when it closes, so an open night is counted from the real closed trades
+            trades = 0
+            for table in ("positions", "strat_positions"):
+                trades += (await db.fetchone(f"SELECT COUNT(*) n FROM {table} WHERE closed_at >= ?", (since,)))["n"]
+            recap = {"started_at": since, "start_equity": night["start_cash"], "trades": trades,
                      "passes": by.get("pass", 0), "kills": by.get("kill", 0) + by.get("reject", 0), "buys": by.get("buy", 0),
                      "sells": by.get("sell", 0)}
         # the coin tape: the newest scan of each recently scanned coin, with the 1 h change the scanner read (never computed here)
