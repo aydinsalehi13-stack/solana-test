@@ -38,6 +38,16 @@
       this.dirty = true;
     },
 
+    /* The view changed (prompt / orion_fast / both): rebuild from the same data and draw the line in again. */
+    refit() {
+      this.model = this.build(this.data);
+      D.$('#chart-empty').hidden = !!this.model;
+      if (this.model && !D.reduced()) this.reveal = { t0: performance.now(), ms: 700 };
+      const m = this.model;
+      D.$('#chart-t0').textContent = m ? D.hm(m.t0) : ''; D.$('#chart-t1').textContent = m ? D.hm(m.t1) : '';
+      this.head = null; this.dirty = true;
+    },
+
     /* A live reading from the stream: the newest point of each line follows it at once (one live point per 20 s is kept;
        the full series is reloaded from the desk every 30 s anyway). */
     live(strategies, ts) {
@@ -59,7 +69,8 @@
 
     /* Turn the two balance series into dollars above/below start, plus their sum on a shared clock. */
     build(p) {
-      const live = p.series.filter((s) => s.points.length > 0);
+      const view = D.state.view || 'both';   // the line shows what the big number shows: one strategy, or both added up
+      const live = p.series.filter((s) => s.points.length > 0 && (view === 'both' || s.name === view));
       if (!live.some((s) => s.points.length > 1)) return null;
       const times = Array.from(new Set(live.flatMap((s) => s.points.map((q) => q[0])))).sort((a, b) => a - b);   // (live points carry a third value: when they were added)
       const idx = live.map(() => 0);
@@ -120,7 +131,7 @@
       ctx.beginPath(); ctx.rect(0, 0, Math.max(1, xEnd * prog + 1), h); ctx.clip();
       // each strategy: a thin line of its own (wide charts only: a phone shows the one desk line, like the reference)
       for (const l of m.lines) {
-        if (l.points.length < 2 || w < 560) continue;
+        if (l.points.length < 2 || w < 560 || m.lines.length < 2) continue;
         ctx.beginPath(); l.points.forEach(([t, v], i) => (i ? ctx.lineTo(X(t), Y(v)) : ctx.moveTo(X(t), Y(v))));
         ctx.lineJoin = 'round'; ctx.lineWidth = 1.3; ctx.globalAlpha = 0.75; ctx.strokeStyle = colorOf(l.name); ctx.stroke(); ctx.globalAlpha = 1;
       }
@@ -179,7 +190,7 @@
         const tip = this.tip;
         tip.replaceChildren(D.h('small', { text: new Date(tt * 1000).toLocaleString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' }) }),
           D.h('div', null, D.h('i', { style: 'background:' + col }), 'value  ', D.h('b', { text: D.usd(m.putIn + tv) }), '  ', D.h('span', { class: D.dir(tv), text: D.usd(tv, { sign: true }) })),
-          ...m.lines.map((l) => { const v = valueAt(l.points, tt); return D.h('div', null, D.h('i', { style: 'background:' + colorOf(l.name) }), l.name + '  ', D.h('b', { text: D.usd(l.start + v) }), '  ', D.h('span', { class: D.dir(v), text: D.usd(v, { sign: true }) })); }));
+          ...(m.lines.length < 2 ? [] : m.lines).map((l) => { const v = valueAt(l.points, tt); return D.h('div', null, D.h('i', { style: 'background:' + colorOf(l.name) }), l.name + '  ', D.h('b', { text: D.usd(l.start + v) }), '  ', D.h('span', { class: D.dir(v), text: D.usd(v, { sign: true }) })); }));
         tip.hidden = false;
         const tw = tip.offsetWidth;
         tip.style.left = Math.min(w - tw - 6, Math.max(6, x + 14)) + 'px'; tip.style.top = '4px';

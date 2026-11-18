@@ -130,7 +130,7 @@
     <div class="ledger__cols">
       <div class="ledger__left">
         <div class="hero">
-          <p class="hero__meta"><span>paper</span><span id="feed-badge">connecting</span><span id="hero-agents">agents</span><span id="hero-in"></span></p>
+          <p class="hero__meta"><span id="hero-view">prompt</span><span>paper</span><span id="feed-badge">connecting</span><span id="hero-agents">agents</span><span id="hero-in"></span></p>
           <div class="hero__row">
             <div class="hero__bal"><span class="od skeleton" id="bal-total" role="img" aria-label="loading"></span></div>
             <span class="delta" id="hero-delta" hidden></span>
@@ -141,19 +141,22 @@
           </div>
           <p class="hero__pnl"><span id="hero-pnl" class="flat">&nbsp;</span><time id="hero-clock"></time></p>
         </div>
-        <div class="card strats" id="strats">
-          <article class="strat" data-strategy="prompt">
-            <i class="sdot sdot--prompt"></i><h2>prompt</h2><span class="strat__sub">master strategy</span>
+        <div class="card strats" id="strats" role="radiogroup" aria-label="Which one the big number and the line show">
+          <div class="strat" data-view="prompt" role="radio" tabindex="0" aria-checked="true">
+            <i class="sdot sdot--prompt"></i><h2>prompt<small>master strategy</small></h2>
             <span class="strat__bal"><span class="od skeleton" id="bal-prompt" role="img" aria-label="loading"></span></span>
-            <p class="strat__pnl skeleton" id="pnl-prompt">loading</p>
-            <p class="strat__stats" id="stats-prompt"></p>
-          </article>
-          <article class="strat" data-strategy="orion_fast">
-            <i class="sdot sdot--orion"></i><h2>orion_fast</h2><span class="strat__sub">fast momentum</span>
+            <p class="strat__line"><span class="strat__pnl skeleton" id="pnl-prompt">loading</span><span class="strat__stats" id="stats-prompt"></span></p>
+          </div>
+          <div class="strat" data-view="orion_fast" role="radio" tabindex="0" aria-checked="false">
+            <i class="sdot sdot--orion"></i><h2>orion_fast<small>fast momentum</small></h2>
             <span class="strat__bal"><span class="od skeleton" id="bal-orion_fast" role="img" aria-label="loading"></span></span>
-            <p class="strat__pnl skeleton" id="pnl-orion_fast">loading</p>
-            <p class="strat__stats" id="stats-orion_fast"></p>
-          </article>
+            <p class="strat__line"><span class="strat__pnl skeleton" id="pnl-orion_fast">loading</span><span class="strat__stats" id="stats-orion_fast"></span></p>
+          </div>
+          <div class="strat" data-view="both" role="radio" tabindex="0" aria-checked="false">
+            <i class="sdot sdot--both"></i><h2>both<small>added up</small></h2>
+            <span class="strat__bal" id="bal-both">no data</span>
+            <p class="strat__line"><span class="strat__pnl" id="pnl-both"></span><span class="strat__stats" id="stats-both"></span></p>
+          </div>
         </div>
       </div>
       <div class="chart">
@@ -248,10 +251,6 @@
     <div id="settings"></div>
   </section>
 
-  <section class="panel panel--picks" data-tab="account" data-panel="picks">
-    <header class="panel__head"><h2>Copy picks</h2></header>
-    <p class="empty">Not set up yet. Copy picks are not built in this version.</p>
-  </section>
 </main>
 
 <nav class="tabbar" id="tabbar" aria-label="Sections">

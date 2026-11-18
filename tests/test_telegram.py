@@ -112,7 +112,7 @@ async def test_nobody_is_owner_until_someone_says_start(tmp_path):
 
 
 async def test_every_message_starts_with_paper_and_nothing_leaks_the_token(env):
-    for text in ("help", "status", "paper", "picks", "nonsense", "LIVE", "why BORK", "withdraw"):
+    for text in ("help", "status", "paper", "nonsense", "LIVE", "why BORK", "withdraw"):
         for m in await env.say(text):
             assert m.startswith("PAPER · "), (text, m[:40])
     assert all(TOKEN not in str(s) for s in env.fake.sent)
@@ -251,8 +251,9 @@ async def test_there_is_no_withdraw_command(env):
     assert "def cmd_withdraw" not in src and '"withdraw":' not in src.split("handlers = {")[1].split("}")[0]
 
 
-async def test_picks_help_and_unknown(env):
-    assert "not set up yet" in (await env.say("picks"))[0]
+async def test_help_lists_only_commands_that_work_and_unknown_text_is_not_acted_on(env):
+    assert "picks" not in (await env.say("help"))[0].lower()  # a command that does nothing is not offered
+    assert "did not understand" in (await env.say("picks"))[0]
     assert "There is no withdraw command" in (await env.say("help"))[0] and "sell X" in (await env.say("/help"))[0]
     assert "did not understand" in (await env.say("make me rich"))[0]
 

@@ -65,4 +65,14 @@
     }
   }
   D.Odometer = Odometer;
+
+  /* The big number always fits: when a longer figure arrives ($1,234.56, $12,345.67) the type shrinks just enough that nothing is cut off. */
+  D.fitHero = () => {
+    const bal = D.$('.hero__bal'), el = D.$('#bal-total'), row = D.$('.hero__row'), delta = D.$('#hero-delta');
+    if (!bal || !el || !row.offsetWidth) return;
+    bal.style.removeProperty('--hero-fs');
+    const natural = el.offsetWidth, room = row.clientWidth - (delta.hidden ? 0 : delta.offsetWidth + 12);
+    if (natural > room && natural > 0) bal.style.setProperty('--hero-fs', Math.floor(parseFloat(getComputedStyle(bal).fontSize) * (room / natural) * 100) / 100 + 'px');
+  };
+  window.addEventListener('resize', () => D.fitHero());
 })();

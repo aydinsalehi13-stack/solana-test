@@ -182,19 +182,17 @@ def mount(api: APIRouter, db, hub, supervisor=None) -> None:
             "SELECT s.mint, s.ts, s.h1_change_pct, s.verdict, COALESCE((SELECT symbol FROM coins c WHERE c.mint = s.mint), "
             "(SELECT symbol FROM decisions d WHERE d.mint = s.mint AND d.symbol IS NOT NULL ORDER BY d.id DESC LIMIT 1)) AS symbol "
             "FROM scans s WHERE s.id IN (SELECT MAX(id) FROM scans WHERE ts > ? GROUP BY mint) ORDER BY s.ts DESC LIMIT 16", (now - 3 * 3600,))
-        # change over the last hour: today's equity minus the last reading that is at least an hour old (no such reading = no data)
-        delta_1h, have = 0.0, False
+        # change over the last hour, per strategy: its equity now minus its last reading that is at least an hour old (no such reading = no data)
+        delta_1h = {}
         for c, sql in zip(cards, ("SELECT equity_usd e FROM balance WHERE strategy='prompt' AND ts <= ? ORDER BY ts DESC LIMIT 1",
                                   "SELECT equity_usd e FROM strat_balance WHERE strategy='orion_fast' AND ts <= ? ORDER BY ts DESC LIMIT 1")):
             old = await db.fetchone(sql, (now - 3600,))
-            if c["balance"] is not None and old and old["e"] is not None:
-                delta_1h += c["balance"] - old["e"]
-                have = True
+            delta_1h[c["name"]] = c["balance"] - old["e"] if c["balance"] is not None and old and old["e"] is not None else None
         if recap:
             recap["ends_at"] = session_end(recap["started_at"], s["lock_time"])
         return {
             "mode": await db.get_setting("mode", config.DEFAULT_MODE), "ts": now,
-            "ticker": ticker, "delta_1h": delta_1h if have else None,
+            "ticker": ticker, "delta_1h": delta_1h,
             "strategies": cards, "agents": agents, "decisions": decisions, "radar": radar, "kills": kills, "night": recap,
             "feed": hub.status["feed"]() if "feed" in hub.status else None,
             "stages": hub.metrics.snapshot(), "loop_lag_ms": hub.lag.snapshot(),

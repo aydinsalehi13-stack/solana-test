@@ -4,14 +4,24 @@
   const D = window.D;
   const P = (D.panels = {});
 
-  /* ---------------------------------- hero + the two strategies ---------------------------------- */
+  /* ---------------------------------- hero + the strategies ----------------------------------
+     The big number and the line show ONE thing you pick (default: prompt, which starts at $150): prompt, orion_fast, or both added up. */
   const odo = {};
+  const VIEWS = ['prompt', 'orion_fast', 'both'];
+  D.state.view = (() => { try { const v = localStorage.getItem('desk_view'); return VIEWS.includes(v) ? v : 'prompt'; } catch (e) { return 'prompt'; } })();
+  const selected = (live) => (D.state.view === 'both' ? live.strategies : live.strategies.filter((s) => s.name === D.state.view));
+  const sumOf = (rows, key) => (rows.length && rows.every((r) => D.isNum(r[key])) ? rows.reduce((a, r) => a + r[key], 0) : null);   // one missing value = no data, never a partial sum
+  P.setView = (v) => {
+    if (!VIEWS.includes(v) || v === D.state.view) return;
+    D.state.view = v;
+    try { localStorage.setItem('desk_view', v); } catch (e) { /* private mode */ }
+    if (D.state.live) P.ledger(D.state.live);
+    D.equity.refit();
+  };
   P.ledger = (live) => {
-    // the big number is the whole desk: every strategy that has a balance, added up. No balance yet = no data.
-    const have = live.strategies.filter((s) => D.isNum(s.balance));
-    const total = have.length ? have.reduce((a, s) => a + s.balance, 0) : null;
-    const putIn = have.reduce((a, s) => a + s.start_cash, 0);
-    const trades = live.strategies.reduce((a, s) => a + s.trades, 0), wins = live.strategies.reduce((a, s) => a + s.wins, 0);
+    const rows = selected(live);
+    const total = sumOf(rows, 'balance'), putIn = rows.reduce((a, s) => a + s.start_cash, 0);
+    const trades = rows.reduce((a, s) => a + s.trades, 0), wins = rows.reduce((a, s) => a + s.wins, 0);
     P.totals = { total, putIn, trades, wins, losses: trades - wins };
     odo.total = odo.total || new D.Odometer(D.$('#bal-total'), (n) => D.usd(n));
     if (D.isNum(total) && D.isNum(P.lastTotal) && Math.abs(total - P.lastTotal) >= 0.005) {   // the number moved: a brief green or red tint
@@ -19,6 +29,8 @@
     }
     P.lastTotal = total;
     odo.total.set(total);
+    D.fitHero();
+    D.$('#hero-view').textContent = D.state.view === 'both' ? 'both strategies' : D.state.view;
     const pnl = total == null ? null : total - putIn;
     const el = D.$('#hero-pnl');
     el.className = pnl == null ? 'flat' : D.dir(pnl);
@@ -27,13 +39,16 @@
     const mult = D.$('#hero-mult');
     mult.hidden = total == null || !putIn;
     if (!mult.hidden) mult.textContent = (total / putIn).toFixed(2) + '×';
+    const hour = sumOf(rows.map((s) => ({ v: live.delta_1h ? live.delta_1h[s.name] : null })), 'v');
     const delta = D.$('#hero-delta');
-    delta.hidden = !D.isNum(live.delta_1h);
+    delta.hidden = hour == null;
     if (!delta.hidden) {
-      const txt = D.usd(live.delta_1h, { sign: true, d: Math.abs(live.delta_1h) >= 100 ? 0 : 2 });
-      if (delta.textContent !== txt) { delta.textContent = txt; delta.className = 'delta ' + D.dir(live.delta_1h); delta.style.animation = 'none'; void delta.offsetWidth; delta.style.animation = ''; }
+      const txt = D.usd(hour, { sign: true, d: Math.abs(hour) >= 100 ? 0 : 2 });
+      if (delta.textContent !== txt) { delta.textContent = txt; delta.className = 'delta ' + D.dir(hour); delta.style.animation = 'none'; void delta.offsetWidth; delta.style.animation = ''; }
       delta.title = 'Change in the last hour'; delta.setAttribute('aria-label', 'Change in the last hour: ' + txt);
     }
+    const segs = (s) => (s.trades ? [s.trades + (s.trades === 1 ? ' trade' : ' trades'), D.pct(s.win_rate, { d: 0 }) + ' win', s.open.length + ' open', 'fees ' + D.usd(s.fees_usd)] : ['no trades yet', s.open.length + ' open']);
+    const fill = (el, parts) => el.replaceChildren(...parts.flatMap((t, i) => (i ? [' · ', D.h('span', { class: 'seg-nb', text: t })] : [D.h('span', { class: 'seg-nb', text: t })])));   // the line can only break between two facts, never inside one
     for (const s of live.strategies) {
       const id = s.name;
       odo[id] = odo[id] || new D.Odometer(D.$('#bal-' + id), (n) => D.usd(n));
@@ -41,20 +56,31 @@
       const p = D.$('#pnl-' + id);
       if (s.pnl_usd == null) { p.className = 'strat__pnl flat'; p.textContent = 'no data'; }
       else { p.className = 'strat__pnl ' + D.dir(s.pnl_usd); p.textContent = D.usd(s.pnl_usd, { sign: true }) + ' (' + D.pct(s.pnl_pct, { sign: true }) + ')'; }
-      D.$('#stats-' + id).replaceChildren(s.trades
-        ? s.trades + (s.trades === 1 ? ' trade' : ' trades') + ' · ' + D.pct(s.win_rate, { d: 0 }) + ' win · ' + s.open.length + ' open'
-        : 'no trades yet · ' + s.open.length + ' open', s.trades ? D.h('span', { class: 'strat__fees', text: ' · fees ' + D.usd(s.fees_usd) }) : null);
+      fill(D.$('#stats-' + id), segs(s));
     }
+    // "both": the two added up, and only when both have a balance
+    const sum = sumOf(live.strategies, 'balance'), start = live.strategies.reduce((a, s) => a + s.start_cash, 0);
+    D.$('#bal-both').textContent = sum == null ? 'no data' : D.usd(sum);
+    const bp = D.$('#pnl-both');
+    bp.className = 'strat__pnl ' + (sum == null ? 'flat' : D.dir(sum - start));
+    bp.textContent = sum == null ? 'no data' : D.usd(sum - start, { sign: true }) + ' (' + D.pct(100 * (sum - start) / start, { sign: true }) + ')';
+    const tr = live.strategies.reduce((a, s) => a + s.trades, 0), op = live.strategies.reduce((a, s) => a + s.open.length, 0);
+    fill(D.$('#stats-both'), ['put in ' + D.usd(start, { d: 0 }), tr + (tr === 1 ? ' trade' : ' trades'), op + ' open']);
+    D.$$('#strats .strat').forEach((e) => { const on = e.dataset.view === D.state.view; e.classList.toggle('is-on', on); e.setAttribute('aria-checked', String(on)); });
     const sw = (c) => D.h('i', { style: 'border-color:' + c });
     D.$('#chart-legend').replaceChildren(D.h('span', null, D.h('i'), 'value'), D.h('span', null, D.h('i', { class: 'dash' }), 'put in'),
-      ...live.strategies.map((s) => D.h('span', { class: 'legend__s' }, sw(D.css(s.name === 'prompt' ? '--prompt' : '--orion')), s.name)));
+      ...(D.state.view === 'both' ? live.strategies.map((s) => D.h('span', { class: 'legend__s' }, sw(D.css(s.name === 'prompt' ? '--prompt' : '--orion')), s.name)) : []));
   };
+  D.$$('#strats .strat').forEach((e) => {
+    e.addEventListener('click', () => P.setView(e.dataset.view));
+    e.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); P.setView(e.dataset.view); } });
+  });
 
   /* ---------------------------------- header + the meta line under it ---------------------------------- */
   const SHORT = { 'PumpPortal live': 'Live', 'DexScreener snapshots': 'Snapshots', 'feed down': 'Feed down' };
   P.header = (live) => {
     const pill = D.$('#mode-pill');
-    pill.textContent = live.mode === 'LIVE' ? 'LIVE' : 'paper mode'; pill.classList.toggle('is-live', live.mode === 'LIVE');
+    pill.replaceChildren(...(live.mode === 'LIVE' ? ['LIVE'] : ['paper', D.h('span', { class: 'mode-word', text: ' mode' })])); pill.classList.toggle('is-live', live.mode === 'LIVE');   // a narrow screen shows just "paper"
     const f = live.feed, badge = f ? f.badge : 'no feed';
     D.$('#feed-badge').textContent = badge;
     D.$('#feed-short').textContent = !f ? 'No feed' : SHORT[badge] || 'Slow feed';
@@ -171,8 +197,9 @@
       clearTimeout(P.agentsSoon); P.agentsSoon = setTimeout(() => { if (D.state.live) P.agents(D.state.live); }, 60);
     }
     if (!passes(d)) return;
-    const ol = D.$('#log'); ol.prepend(logRow(d, true));
+    const ol = D.$('#log'), row = logRow(d, true); ol.prepend(row);
     while (ol.children.length > 200) ol.lastChild.remove();
+    ol.style.setProperty('--row', row.offsetHeight + 'px');   // the list slides down by exactly the height of the new line, however many lines it wraps to
     const now = performance.now();   // the push runs at most twice a second: a burst of decisions just lands, it never stacks animations
     if (now - lastPush > 500 && ol.scrollTop < 4 && !D.reduced()) { lastPush = now; ol.classList.remove('is-push'); void ol.offsetWidth; ol.classList.add('is-push'); }
     D.$('#log-empty').hidden = true;
@@ -348,7 +375,8 @@
     if (!live) return;
     const n = live.night, T = P.totals || {}, note = D.$('#rc-note');
     note.textContent = ''; note.className = 'sheet__note';
-    D.$('#rc-sub').textContent = 'paper · ' + (n ? D.hm(n.started_at) + ' → ' + (n.ends_at ? D.hm(n.ends_at) : 'open') : 'no session yet');
+    const viewName = D.state.view === 'both' ? 'both strategies' : D.state.view;
+    D.$('#rc-sub').textContent = viewName + ' · paper · ' + (n ? D.hm(n.started_at) + ' → ' + (n.ends_at ? D.hm(n.ends_at) : 'open') : 'no session yet');
     D.$('#rc-in').textContent = T.total == null ? 'no data' : D.usd(T.putIn);
     const now = D.$('#rc-now'); now.className = T.total == null ? 'flat' : D.dir(T.total - T.putIn) === 'down' ? 'down' : 'up';
     now.textContent = T.total == null ? 'no data' : D.usd(T.total); now.setAttribute('aria-label', now.textContent);
@@ -359,13 +387,17 @@
     }
     const mult = D.$('#rc-mult'); mult.hidden = T.total == null || !T.putIn; if (!mult.hidden) mult.textContent = (T.total / T.putIn).toFixed(2) + '×';
     const running = live.agents.filter((a) => a.running).length;
-    const tiles = [['trades', n ? n.trades : 'no data'], ['passed', n ? n.passes : 'no data'], ['killed', n ? n.kills : 'no data'], ['agents', running]];
-    D.$('#rc-tiles').replaceChildren(...tiles.map(([k, v]) => D.h('div', null, D.h('dt', { text: k }), D.h('dd', { text: String(v) }))));
+    const drawTiles = (tradeCount) => {
+      const tiles = [['trades', tradeCount], ['passed', n ? n.passes : 'no data'], ['killed', n ? n.kills : 'no data'], ['agents', running]];
+      D.$('#rc-tiles').replaceChildren(...tiles.map(([k, v]) => D.h('div', null, D.h('dt', { text: k }), D.h('dd', { text: String(v) }))));
+    };
+    drawTiles('…');
     const lines = D.$('#rc-lines');
     lines.replaceChildren(D.h('p', { class: 'dim', text: 'reading the trades' }));
     if (!dlg.open) dlg.showModal();
     try {
-      const closed = (await D.json('/api/activity?limit=200')).closed.filter((t) => t.pnl_usd != null && (!n || t.closed_at >= n.started_at));
+      const closed = (await D.json('/api/activity?limit=200')).closed.filter((t) => t.pnl_usd != null && (!n || t.closed_at >= n.started_at) && (D.state.view === 'both' || t.strategy === D.state.view));
+      drawTiles(closed.length);   // the trades of what is shown, counted from the real closed trades
       const line = (label, t) => D.h('p', null, label + ' ', D.avatar(t.mint, t.symbol), ' ' + D.sym(t.symbol, t.mint) + ' ', D.h('span', { class: D.dir(t.pnl_usd), text: D.usd(t.pnl_usd, { sign: true }) }));
       const out = [];
       if (closed.length) {
@@ -373,7 +405,7 @@
         const w = closed.filter((t) => t.pnl_usd > 0).length;
         out.push(line('best', best), line('worst', worst), D.h('p', { text: 'win rate ' + Math.round(100 * w / closed.length) + '% · ' + w + ' won, ' + (closed.length - w) + ' lost this session' }));
       } else out.push(D.h('p', { text: 'no closed trades this session yet' }));
-      out.push(D.h('p', { class: 'dim', text: live.strategies.length + ' strategies · ' + running + ' agents · paper money only' }));
+      out.push(D.h('p', { class: 'dim', text: viewName + ' · ' + running + ' agents · paper money only' }));
       lines.replaceChildren(...out);
     } catch (e) { if (!(e instanceof D.AuthError)) lines.replaceChildren(D.h('p', { class: 'down', text: 'Could not read the trades: ' + e.message })); }
   };

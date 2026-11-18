@@ -42,6 +42,8 @@ ITEMS: list[tuple[str, str, tuple[str, ...], str | None]] = [
     ("jupiter", "Jupiter refuses wallet fields", ("test_sources_p4",), r"jupiter|wallet"),
     ("fees", "the fee tiers", ("test_fees",), None),
     ("qa", "QA (Playwright): 1440 + 390, no console errors, live updates, reconnect, login states, no token visible", ("test_dashboard_qa",), None),
+    ("ui_audit", "UI audit: nothing cut off at 5 screen sizes with extreme numbers, every control works, the big number starts at $150", ("test_ui_audit",), None),
+    ("no_fake", "the product holds nothing made up: no fake rows, no fake-mode switch, no invented numbers", ("test_no_fake",), None),
     ("replay_accept", "replay acceptance: kill Chrome and the desk, both come back, no order runs twice", ("test_verify", "test_process", "test_orion_bot", "test_pipeline"),
      r"kill_the_desk|relaunch|restart|book_survives|survives"),
     ("restart_wake", "24/7: wake closes stale positions, session re-proved, generated service files parse", ("test_phase8",), None),

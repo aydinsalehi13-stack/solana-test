@@ -190,7 +190,6 @@ paper: confirm the mode
 LIVE: ask for live trading (typed in capitals; refused until every gate is met)
 live: a screenshot of the dashboard now
 report: the night report
-picks: copy picks (not set up yet)
 There is no withdraw command. Withdraw in the FOMO app yourself."""
 
 
@@ -261,7 +260,7 @@ class DeskBot:
             return await self.confirm(chat, False)
         handlers = {"start": self.cmd_help, "help": self.cmd_help, "status": self.cmd_status, "why": self.cmd_why, "sell": self.cmd_sell,
                     "buy": self.cmd_buy, "pause": self.cmd_pause, "resume": self.cmd_resume, "set": self.cmd_set, "paper": self.cmd_paper,
-                    "picks": self.cmd_picks, "report": self.cmd_report, "live": self.cmd_live}
+                    "report": self.cmd_report, "live": self.cmd_live}
         if word in ("withdraw", "deposit", "send", "transfer"):
             return await self.say(chat, "There is no withdraw command. Withdraw in the FOMO app yourself.")
         fn = handlers.get(word)
@@ -428,9 +427,6 @@ class DeskBot:
         if all(x["met"] for x in g):
             lines.append(gates_mod.LIVE_NOT_BUILT + ".")
         return "\n".join(lines)
-
-    async def cmd_picks(self, chat, rest):
-        return "Copy picks are not set up yet."
 
     async def cmd_report(self, chat, rest):
         import report

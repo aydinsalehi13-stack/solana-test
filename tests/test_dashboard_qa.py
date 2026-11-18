@@ -150,15 +150,15 @@ async def test_desktop_1440_every_panel_is_fed_by_the_desk(env):
     await page.wait_for_function("document.querySelectorAll('#log li').length > 20")
     await page.wait_for_timeout(1500)
     panels = await page.evaluate("[...document.querySelectorAll('[data-panel]')].map(e => e.dataset.panel)")
-    assert len(panels) == 15
+    assert len(panels) == 14 and "picks" not in panels  # nothing that does nothing is on the page
     t = lambda sel: page.inner_text(sel)  # noqa: E731
     assert (await page.get_attribute("#bal-prompt", "aria-label")).startswith("$1") and "$" in await page.get_attribute("#bal-orion_fast", "aria-label")
     assert "+$" in await t("#pnl-prompt") and "−$" in await t("#pnl-orion_fast")
     assert "6 running" == await t("#agents-count") and "6 agents" == await t("#hero-agents")
-    total = float((await page.get_attribute("#bal-total", "aria-label")).replace("$", "").replace(",", ""))  # the big number is the two strategies added up
-    parts = [float((await page.get_attribute(f"#bal-{n}", "aria-label")).replace("$", "").replace(",", "")) for n in ("prompt", "orion_fast")]
-    assert abs(total - sum(parts)) < 0.011 and (await t("#hero-mult")).endswith("×") and "in $300 · 7 trades" == await t("#hero-in-text")
-    assert "3W 4L" in await t("#hero-pnl") and await page.is_visible("#hero-delta")
+    assert await t("#hero-view") == "prompt"  # the big number starts on the master strategy, which starts at $150
+    assert await page.get_attribute("#bal-total", "aria-label") == await page.get_attribute("#bal-prompt", "aria-label")
+    assert (await t("#hero-mult")).endswith("×") and "in $150 · 3 trades" == await t("#hero-in-text")
+    assert "2W 1L" in await t("#hero-pnl") and await page.is_visible("#hero-delta")
     assert await page.locator("#ticker .tk").count() == 24 and "$PAWS" in await t("#ticker") and "+7.71%" in await t("#ticker")  # 12 coins, twice for the loop
     assert await t("#stream-label") == "streaming" and await t("#chart-t0") != "" and "put in" in await t("#chart-legend")
     assert await page.locator("#agents li").count() == 6 and await page.locator("#agents svg.spark").count() == 6 and await page.locator("#agents svg.ring").count() == 6
@@ -255,11 +255,12 @@ async def test_night_recap_sheet_reads_everything_from_the_desk(env):
     await page.wait_for_selector("#recap-sheet[open]")
     await page.wait_for_function("document.querySelector('#rc-lines').textContent.includes('win rate')", timeout=5000)
     text = await page.inner_text("#recap-sheet")
-    assert "Night recap" in text and "put in" in text and "$300.00" in text and "now worth" in text
+    assert "Night recap" in text and "put in" in text and "$150.00" in text and "now worth" in text and "prompt · paper" in text
     await page.wait_for_timeout(900)  # the figure counts up for 0.65 s, then rests on the exact value
     assert await page.inner_text("#rc-now") == await page.get_attribute("#bal-total", "aria-label")
     assert "best" in text and "$PAWS" in text and "+$4.80" in text and "worst" in text and "$MOCHI" in text and "−$4.10" in text
-    assert "win rate 43% · 3 won, 4 lost" in text and "paper money only" in text
+    assert "win rate 67% · 2 won, 1 lost" in text and "paper money only" in text  # the prompt strategy's three closed trades
+    assert (await page.inner_text("#rc-tiles")).replace("\n", " ").startswith("trades 3")
     await page.wait_for_timeout(700)
     PROOF.mkdir(parents=True, exist_ok=True)
     await page.screenshot(path=str(PROOF / "phone_390_recap.png"))
@@ -457,10 +458,16 @@ async def test_the_big_number_positions_and_agents_follow_the_desk_live_without_
     await page.evaluate("window.__marker = 'same-page'; window.__lives = 0; const f = window.fetch; window.fetch = (u, o) => { if (String(u).includes('/api/live')) window.__lives++; return f(u, o); }; null")
     before = await page.get_attribute("#bal-total", "aria-label")
     env.hub.status["equity"] = lambda: {"prompt": 171.25, "orion_fast": 140.5}  # what the desk holds in memory right now
-    await page.wait_for_function("document.querySelector('#bal-total').getAttribute('aria-label') === '$311.75'", timeout=4000)
-    assert before != "$311.75" and await page.get_attribute("#bal-prompt", "aria-label") == "$171.25"
+    await page.wait_for_function("document.querySelector('#bal-total').getAttribute('aria-label') === '$171.25'", timeout=4000)  # the big number follows the prompt strategy
+    assert before != "$171.25" and await page.get_attribute("#bal-prompt", "aria-label") == "$171.25"
     assert "+$21.25 (+14.2%)" in await page.inner_text("#pnl-prompt") and "−$9.50" in await page.inner_text("#pnl-orion_fast")
-    assert await page.inner_text("#hero-mult") == "1.04×" and "+$11.75" in await page.inner_text("#hero-pnl")
+    assert await page.inner_text("#hero-mult") == "1.14×" and "+$21.25" in await page.inner_text("#hero-pnl")
+    assert await page.inner_text("#bal-both") == "$311.75"  # both added up, in its own row
+    await page.click('#strats [data-view="both"]')  # pick "both": the big number is now the two added up
+    await page.wait_for_function("document.querySelector('#bal-total').getAttribute('aria-label') === '$311.75'", timeout=4000)
+    assert "+$11.75" in await page.inner_text("#hero-pnl") and await page.inner_text("#hero-view") == "both strategies" and "in $300" in await page.inner_text("#hero-in-text")
+    await page.click('#strats [data-view="prompt"]')
+    await page.wait_for_function("document.querySelector('#bal-total').getAttribute('aria-label') === '$171.25'", timeout=4000)
     # a position's price moves: its P&L cell follows (36 tokens x 0.75 - $18 = +$9.00)
     env.hub.objects["marks"] = lambda: {DEMO_MINTS[3]: {"price": 0.75, "tokens": 36.0, "realized": 0.0}}
     await page.wait_for_function("document.querySelector('#positions .row .row__pnl').textContent.includes('+$9.00')", timeout=4000)
